@@ -9,7 +9,9 @@ from PIL import Image, ImageEnhance
 import io
 import os
 from dotenv import load_dotenv
+from flask import Flask 
 
+app = Flask(__name__)
 # Load environment variables
 load_dotenv()
 
@@ -732,4 +734,15 @@ def main():
         print(f"❌ Error starting bot: {e}")
 
 if __name__ == '__main__':
-    main()
+    # Import here to avoid circular imports
+    from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+    
+    # Start bot in a separate thread
+    import threading
+    bot_thread = threading.Thread(target=main, daemon=True)
+    bot_thread.start()
+    
+    # Start Flask app (required for Render)
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌍 Starting Flask web server on port {port}")
+    app.run(host="0.0.0.0", port=port)
