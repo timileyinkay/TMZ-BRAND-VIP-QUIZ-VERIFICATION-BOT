@@ -3,4 +3,5 @@ pillow
 pytesseract
 python-dotenv
 flask
-pytzurllib3==1.26.15
+urllib3==1.26.15
+
