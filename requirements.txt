@@ -1,7 +1,6 @@
-urllib3==2.2.3
 python-telegram-bot==13.15
 pillow
 pytesseract
 python-dotenv
 flask
-pytz
+pytzurllib3==1.26.15
