@@ -95,7 +95,7 @@ def extract_text_from_image(image_data):
         extracted_text = pytesseract.image_to_string(image, config=custom_config)
         
         print("📸 OCR Text Extracted Successfully")
-        print(f"📝 Raw OCR Text:\n{extracted_text}")
+        print(f"🔍 Raw OCR Text:\n{extracted_text}")
         return extracted_text
     except Exception as e:
         print(f"❌ OCR Error: {e}")
@@ -215,28 +215,28 @@ def start(update, context):
     print(f"User {user_id} ({user_name}) started the bot")
     
     welcome_text = f"""
-            🤖 TMZBRAND VIP Payment Verification Bot  
+🤖 TMZBRAND VIP Payment Verification Bot  
 
-             Welcome to **TMZ BRAND VIP**, {user_name}! 🔥  
-             'Where you face your fears, test your mind, and prove your worth 🧠💪  
+🎉 Welcome to **TMZ BRAND VIP**, {user_name}! 🚀  
+'Where you face your fears, test your mind, and prove your worth 🧠 🏆  
 
-             How to join the VIP Room:  
-             1️⃣ Use /pay 2000 to create your VIP payment request.  
-             2️⃣ Send the exact amount to our official Opay account.  
-             3️⃣ Include your unique reference in the remark field.  
-             4️⃣ Upload your payment receipt (screenshot) for instant verification.  
+How to join the VIP Room:  
+1️⃣ Use /pay 2000 to create your VIP payment request.  
+2️⃣ Send the exact amount to our official Opay account.  
+3️⃣ Include your unique reference in the remark field.  
+4️⃣ Upload your payment receipt (screenshot) for instant verification.  
 
-             🕒 Verification Window: {TIMEOUT_MINUTES} minutes  
+⏰ Verification Window: {TIMEOUT_MINUTES} minutes  
 
-             Commands:
-             /pay <amount> - Create VIP payment request  
-             /check - Check pending payment  
-             /history - View payment history  
-             /help - Show help message  
+Commands:
+/pay <amount> - Create VIP payment request  
+/check - Check pending payment  
+/history - View payment history  
+/help - Show help message  
 
-             Example: /pay 2000  
+Example: /pay 2000  
 
-             ⚡ Once verified, you’ll gain access to the **TMZBRAND VIP Quiz Room** — where smart minds win big and legends are made! 💰🔥"""
+⚡ Once verified, you'll gain access to the **TMZBRAND VIP Quiz Room** — where smart minds win big and legends are made! 💰🚀"""
 
     update.message.reply_text(welcome_text)
 
@@ -276,7 +276,7 @@ def pay(update, context):
         update.message.reply_text(
             f"⚠️ You already have a pending payment:\n"
             f"💰 Amount: ₦{amount_existing:,}\n"
-            f"🔖 Reference: {ref_existing}\n\n"
+            f"🔑 Reference: {ref_existing}\n\n"
             f"Use /check to view details or wait for it to expire."
         )
         return
@@ -299,14 +299,14 @@ def pay(update, context):
     
     instructions = f"""
 
-🏷️ Requested by: TMZ BRAND VIP 💎  
+🏷️ Requested by: TMZ BRAND VIP 🎯  
 💰 Amount: ₦{amount:,}  
-🔖 Reference: {ref}  
+🔑 Reference: {ref}  
 ⏰ Time Window: {TIMEOUT_MINUTES} minutes  
 🕐 Created: {created_time}  
-📅 Expires: {expiry_time}  
+🕒 Expires: {expiry_time}  
 
-📢 Please send the exact amount to our official Opay account and upload your receipt for verification.  
+📲 Please send the exact amount to our official Opay account and upload your receipt for verification.  
 ⚡ Be quick — the request will expire once the timer runs out!  
 
 ---
@@ -336,7 +336,7 @@ PAYMENT INSTRUCTIONS:
 • Receipt must show timestamp
 • Transaction must be successful
 
-💡 Use /check to monitor your payment status
+🔍 Use /check to monitor your payment status
     """
     
     update.message.reply_text(instructions)
@@ -377,10 +377,10 @@ def check(update, context):
 📋 PENDING PAYMENT
 
 💰 Amount: ₦{amount:,}
-🔖 Reference: {ref}
+🔑 Reference: {ref}
 ⏰ Time Left: {minutes_left}m {seconds_left}s
 🕐 Created: {created_time}
-📅 Expires: {expiry_time}
+🕒 Expires: {expiry_time}
 
 📸 Upload your receipt SCREENSHOT to verify payment.
 🚨 Payment will expire in {minutes_left} minutes {seconds_left} seconds
@@ -416,7 +416,7 @@ def history(update, context):
 def help_cmd(update, context):
     """Handle /help command"""
     help_text = f"""
-🆘 HELP - Opay Payment Verification
+ℹ️ HELP - Opay Payment Verification
 
 Available Commands:
 /start - Start the bot
@@ -510,7 +510,7 @@ def handle_image(update, context):
         return
     
     # Inform user that processing has started
-    processing_msg = update.message.reply_text("🔄 Processing receipt image... Verifying amount and details...")
+    processing_msg = update.message.reply_text("🔍 Processing receipt image... Verifying amount and details...")
     
     try:
         # Get the photo file
@@ -524,7 +524,7 @@ def handle_image(update, context):
             processing_msg.edit_text("❌ Could not read text from image. Please ensure the screenshot is clear and try again.")
             return
         
-        print(f"📝 Extracted Text:\n{extracted_text}")
+        print(f"🔍 Extracted Text:\n{extracted_text}")
         
         # Extract the actual amount from receipt
         amount_found = extract_amount_from_text(extracted_text, expected_amount)
@@ -551,13 +551,13 @@ def handle_image(update, context):
         reference_found = False
         if ref.upper() in extracted_text.upper():
             reference_found = True
-            print(f"🔖 Reference found: {ref}")
+            print(f"🔑 Reference found: {ref}")
         else:
             # Try without "tmzbrand" prefix
             ref_number = ref.replace('tmzbrand', '')
             if ref_number in extracted_text:
                 reference_found = True
-                print(f"🔖 Reference found (number only): {ref_number}")
+                print(f"🔑 Reference found (number only): {ref_number}")
         
         # Check status (multiple success indicators)
         status_indicators = ['success', 'successful', 'completed', 'approved', 'confirmed']
@@ -599,16 +599,16 @@ def handle_image(update, context):
 
 👤 User: {user_name}  
 💰 Amount: ₦{expected_amount:,} ✅  
-🔖 Reference: {ref} ✅  
+🔑 Reference: {ref} ✅  
 🕐 Time: {datetime.now().strftime("%H:%M:%S")}  
-🎯 Status: Verified successfully!  
+🎊 Status: Verified successfully!  
 
-Welcome to **TMZ BRAND VIP** — where smart minds face their fears and win big! 💪🧠💰  
+Welcome to **TMZ BRAND VIP** — where smart minds face their fears and win big! 🏆🧠 💰  
 
 👇 Join your VIP Room below:
 🔗 https://t.me/+mkCp-QwQg4IyYjFk
 
-Thank you for your payment — let the game begin! 🚀🔥
+Thank you for your payment — let the game begin! 🚀🚀
 
             """
             processing_msg.edit_text(success_message)
@@ -630,10 +630,10 @@ Thank you for your payment — let the game begin! 🚀🔥
             error_message = "❌ PAYMENT VERIFICATION FAILED\n\n" + "\n".join(errors)
             error_message += f"\n\n📋 Expected Details:"
             error_message += f"\n💰 Amount: ₦{expected_amount:,}"
-            error_message += f"\n🔖 Reference: {ref}"
+            error_message += f"\n🔑 Reference: {ref}"
             error_message += f"\n👤 Receiver: {RECEIVER_NAME}"
             error_message += f"\n\n💡 Tip: Ensure screenshot shows all details clearly."
-            error_message += f"\n🔧 OCR detected amount: ₦{amount_found if amount_found else 'Not found'}"
+            error_message += f"\n🔍 OCR detected amount: ₦{amount_found if amount_found else 'Not found'}"
             
             processing_msg.edit_text(error_message)
             
@@ -667,14 +667,14 @@ def main():
         for proxy_url in proxy_urls:
             try:
                 if proxy_url:
-                    print(f"🔄 Trying with proxy: {proxy_url}")
+                    print(f"🔗 Trying with proxy: {proxy_url}")
                     request_kwargs = {
                         'proxy_url': proxy_url,
                         'read_timeout': 20,
                         'connect_timeout': 20
                     }
                 else:
-                    print("🔄 Trying direct connection...")
+                    print("🔗 Trying direct connection...")
                     request_kwargs = {
                         'read_timeout': 20,
                         'connect_timeout': 20
@@ -719,7 +719,7 @@ def main():
         print(f"⏰ Time window: {TIMEOUT_MINUTES} minutes")
         print(f"👤 Receiver: {RECEIVER_NAME}")
         print(f"💳 Account: {OPAY_ACCOUNT}")
-        print(f"🔤 OCR: {TESSERACT_AVAILABLE}")
+        print(f"🔍 OCR: {TESSERACT_AVAILABLE}")
         print("💰 MODE: Strict amount verification")
         print("Press Ctrl+C to stop the bot")
         
@@ -744,5 +744,5 @@ if __name__ == '__main__':
     
     # Start Flask app (required for Render)
     port = int(os.environ.get("PORT", 10000))
-    print(f"🌍 Starting Flask web server on port {port}")
+    print(f"🌐 Starting Flask web server on port {port}")
     app.run(host="0.0.0.0", port=port)
