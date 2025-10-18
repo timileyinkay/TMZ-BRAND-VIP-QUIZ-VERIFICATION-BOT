@@ -23,6 +23,10 @@ OPAY_ACCOUNT = os.getenv('OPAY_ACCOUNT_NUMBER')
 RECEIVER_NAME = os.getenv('RECEIVER_NAME')
 TIMEOUT_MINUTES = int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 20))
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
+# Enforced base amount (only this amount will be accepted)
+BASE_AMOUNT = int(os.getenv('BASE_AMOUNT', 2000))
+# Optional TMZ brand fee to display (does NOT change required payment amount)
+TMZ_BRAND_FEE_NAIRA = int(os.getenv('TMZ_BRAND_FEE_NAIRA', 0))
 
 # Safety check: ensure your bot token exists
 if not TOKEN:
@@ -248,24 +252,30 @@ def pay(update, context):
     # Clean up expired payments first
     cleanup_expired_payments()
     
+    # Enforce a single allowed payment amount (BASE_AMOUNT)
     if not context.args:
+        # If no argument provided, instruct the user to use the exact command
         update.message.reply_text(
-            "❌ Usage: /pay <amount>\n\n"
-            "Example: /pay 2000\n"
-            f"Creates {TIMEOUT_MINUTES}-minute payment window for ₦2,000"
+            f"❌ Usage: /pay {BASE_AMOUNT}\n\n"
+            f"Only ₦{BASE_AMOUNT:,} is accepted."
         )
         return
-    
+
+    # Validate provided amount strictly
     try:
         amount = int(context.args[0])
-        if amount <= 0:
-            update.message.reply_text("❌ Amount must be positive")
-            return
-        if amount > 1000000:  # Limit to 1 million
-            update.message.reply_text("❌ Maximum amount is ₦1,000,000")
-            return
     except ValueError:
-        update.message.reply_text("❌ Please provide a valid number")
+        update.message.reply_text("❌ Please provide a valid number (e.g. /pay 2000)")
+        return
+
+    # If user typed an amount other than the enforced BASE_AMOUNT, reject
+    if amount != BASE_AMOUNT:
+        fee_msg = f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,}" if TMZ_BRAND_FEE_NAIRA else ""
+        update.message.reply_text(
+            f"❌ Only ₦{BASE_AMOUNT:,} is accepted for this service.\n"
+            f"You attempted: ₦{amount:,}.\n\n"
+            f"Please run: /pay {BASE_AMOUNT} to create your payment request.{fee_msg}"
+        )
         return
     
     # Check if user has existing pending payment
@@ -281,9 +291,12 @@ def pay(update, context):
         )
         return
     
+    # Use the enforced amount
+    amount = BASE_AMOUNT
+
     # Generate unique reference
     ref = generate_reference()
-    
+
     # Calculate timestamps
     created_at = time.time()
     expiry_at = created_at + (TIMEOUT_MINUTES * 60)
@@ -297,6 +310,8 @@ def pay(update, context):
     created_time = datetime.fromtimestamp(created_at).strftime("%H:%M:%S")
     expiry_time = datetime.fromtimestamp(expiry_at).strftime("%H:%M:%S")
     
+    fee_section = f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,}\n" if TMZ_BRAND_FEE_NAIRA else ""
+
     instructions = f"""
 
 🏷️ Requested by: TMZ BRAND VIP 🎯  
@@ -338,7 +353,10 @@ PAYMENT INSTRUCTIONS:
 
 🔍 Use /check to monitor your payment status
     """
-    
+    # Append fee info if present (fee is informational only; required payment remains BASE_AMOUNT)
+    if TMZ_BRAND_FEE_NAIRA:
+        instructions += f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,} (this is a platform fee)\n"
+
     update.message.reply_text(instructions)
     print(f"Payment request created: User {user_id}, Amount {amount}, Ref {ref}")
 
