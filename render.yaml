@@ -5,4 +5,5 @@ services:
     buildCommand: |
       apt-get update && apt-get install -y tesseract-ocr
       pip install -r requirements.txt
-    startCommand: python ocr_bot_fixed.py
+    # Use explicit python3 command to ensure the script runs with the interpreter
+    startCommand: python3 ocr_bot_fixed.py
