@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment files
+.env
+
+# Database
+*.db
+opay_payments.db
+
+# Logs
+*.log
+
+# Editor files
+.vscode/
+*.swp
+.DS_Store
