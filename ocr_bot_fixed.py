@@ -339,22 +339,28 @@ def validate_and_use_token(token, user_id, bot, invite_ttl_seconds=600):
     if token_user_id != user_id:
         return None
 
-    # Mark token used
-    c.execute("UPDATE join_tokens SET used=1 WHERE token=?", (token,))
-    conn.commit()
-
-    # Create a single-use invite link for this user
+    # Create a single-use invite link for this user (do this BEFORE marking token used)
     if not VIP_CHAT_ID:
         return None
     try:
         expire_date = int(time.time()) + invite_ttl_seconds
-        # Prefer create_chat_invite_link with member_limit=1
+        # Prefer create_chat_invite_link with member_limit=1 (if supported by bot/API)
         try:
             link_obj = bot.create_chat_invite_link(chat_id=VIP_CHAT_ID, expire_date=expire_date, member_limit=1)
             link = link_obj.invite_link if hasattr(link_obj, 'invite_link') else link_obj
         except Exception:
-            # Fallback to export_chat_invite_link (no single-use support)
+            # Fallback to export_chat_invite_link (may not support single-use)
             link = bot.export_chat_invite_link(VIP_CHAT_ID)
+
+        # If invite was created successfully, mark token used
+        if link:
+            try:
+                c.execute("UPDATE join_tokens SET used=1 WHERE token=?", (token,))
+                conn.commit()
+            except Exception as db_e:
+                print(f"❌ Failed to mark token used in DB: {db_e}")
+                # Don't return None here; still return link so user can join
+
         return link
     except Exception as e:
         print(f"❌ Error creating single-use invite: {e}")
@@ -772,10 +778,6 @@ def handle_image(update, context):
 🎊 Status: Verified successfully!  
 
 Welcome to **TMZ BRAND VIP** — where smart minds face their fears and win big! 🏆🧠 💰  
-
-👇 Join your VIP Room below:
-🔗 https://t.me/+mkCp-QwQg4IyYjFk
-
 Thank you for your payment — let the game begin! 🚀🚀
 
             """
@@ -885,9 +887,9 @@ def main():
 
         # Add message handlers
         dispatcher.add_handler(MessageHandler(Filters.photo, handle_image))
-        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
-        # Private message handler for token redemption
+        # Private message handler for token redemption (register before generic text handler)
         dispatcher.add_handler(MessageHandler(Filters.private & Filters.text & ~Filters.command, handle_token_dm))
+        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
         # New chat members handler to enforce token verification
         dispatcher.add_handler(MessageHandler(Filters.status_update.new_chat_members, handle_new_members))
 
