@@ -10,6 +10,7 @@ import io
 import os
 from dotenv import load_dotenv
 from flask import Flask 
+import secrets
 
 app = Flask(__name__)
 # Load environment variables
@@ -27,6 +28,8 @@ ADMIN_ID = int(os.getenv('ADMIN_ID'))
 BASE_AMOUNT = int(os.getenv('BASE_AMOUNT', 2000))
 # Optional TMZ brand fee to display (does NOT change required payment amount)
 TMZ_BRAND_FEE_NAIRA = int(os.getenv('TMZ_BRAND_FEE_NAIRA', 0))
+# VIP group/chat where verified users will join. Must be set to the target chat id (as int)
+VIP_CHAT_ID = int(os.getenv('VIP_CHAT_ID', '0')) if os.getenv('VIP_CHAT_ID') else None
 
 # Safety check: ensure your bot token exists
 if not TOKEN:
@@ -66,6 +69,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS pending_payments
 c.execute('''CREATE TABLE IF NOT EXISTS verified_payments
              (ref TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER, 
               verified_at REAL, user_name TEXT)''')
+# Table to store one-time join tokens per user
+c.execute('''CREATE TABLE IF NOT EXISTS join_tokens
+             (token TEXT PRIMARY KEY, user_id INTEGER, created_at REAL, expiry_at REAL, used INTEGER)''')
 conn.commit()
 
 def generate_reference():
@@ -76,6 +82,12 @@ def cleanup_expired_payments():
     """Clean up expired payments from database"""
     current_time = time.time()
     c.execute("DELETE FROM pending_payments WHERE expiry_at < ?", (current_time,))
+    conn.commit()
+
+def cleanup_expired_tokens():
+    """Remove expired tokens from DB"""
+    current_time = time.time()
+    c.execute("DELETE FROM join_tokens WHERE expiry_at < ?", (current_time,))
     conn.commit()
 
 def extract_text_from_image(image_data):
@@ -243,6 +255,144 @@ Example: /pay 2000
 ⚡ Once verified, you'll gain access to the **TMZBRAND VIP Quiz Room** — where smart minds win big and legends are made! 💰🚀"""
 
     update.message.reply_text(welcome_text)
+
+def generate_join_token_for_user(user_id, ttl_minutes=60):
+    """Create a one-time token for a user valid for ttl_minutes"""
+    token = secrets.token_urlsafe(9)  # reasonably short but random
+    now = time.time()
+    expiry = now + (ttl_minutes * 60)
+    c.execute("INSERT OR REPLACE INTO join_tokens VALUES (?,?,?,?,?)", (token, user_id, now, expiry, 0))
+    conn.commit()
+    return token, expiry
+
+def get_invite_link(bot):
+    """Return an invite link to the VIP group. Requires bot admin in that group."""
+    if not VIP_CHAT_ID:
+        return None
+    try:
+        # export_chat_invite_link returns a permanent link
+        link = bot.export_chat_invite_link(VIP_CHAT_ID)
+        return link
+    except Exception as e:
+        print(f"❌ Could not create invite link: {e}")
+        return None
+
+def handle_token_dm(update, context):
+    """Handle private messages where user redeems their join token"""
+    if update.message.chat.type != 'private':
+        return
+    text = (update.message.text or '').strip()
+    if not text:
+        return
+
+    # Check token in DB
+    c.execute("SELECT user_id, used, expiry_at FROM join_tokens WHERE token=?", (text,))
+    row = c.fetchone()
+    if not row:
+        update.message.reply_text("❌ Invalid token. Please ensure you entered the token provided after payment.")
+        return
+
+    token_user_id, used, expiry_at = row
+    if time.time() > expiry_at:
+        update.message.reply_text("❌ This token has expired. Please request a new one after payment.")
+        return
+
+    if token_user_id != update.effective_user.id:
+        update.message.reply_text("❌ This token is not assigned to your account.")
+        return
+
+    if used:
+        update.message.reply_text("❌ This token has already been used.")
+        return
+
+    # Validate and use token: create single-use invite and return link
+    invite = validate_and_use_token(text, update.effective_user.id, context.bot)
+    if invite:
+        update.message.reply_text(f"✅ Token accepted. Here is your single-use invite link (expires soon): {invite}")
+    else:
+        update.message.reply_text("❌ Token accepted but could not generate an invite link. Please contact admin.")
+
+def redeem_command(update, context):
+    """Handle /redeem <token> command"""
+    if not context.args:
+        update.message.reply_text("Usage: /redeem <your-token-here>")
+        return
+    token = context.args[0].strip()
+    invite = validate_and_use_token(token, update.effective_user.id, context.bot)
+    if invite:
+        update.message.reply_text(f"✅ Token accepted. Here is your single-use invite link (expires soon): {invite}")
+    else:
+        update.message.reply_text("❌ Invalid/expired/used token or failed to create invite. Contact admin.")
+
+def validate_and_use_token(token, user_id, bot, invite_ttl_seconds=600):
+    """Validate token ownership/expiry/used flag; mark used and create a single-use invite link."""
+    cleanup_expired_tokens()
+    c.execute("SELECT user_id, used, expiry_at FROM join_tokens WHERE token=?", (token,))
+    row = c.fetchone()
+    if not row:
+        return None
+    token_user_id, used, expiry_at = row
+    if time.time() > expiry_at:
+        return None
+    if used:
+        return None
+    if token_user_id != user_id:
+        return None
+
+    # Mark token used
+    c.execute("UPDATE join_tokens SET used=1 WHERE token=?", (token,))
+    conn.commit()
+
+    # Create a single-use invite link for this user
+    if not VIP_CHAT_ID:
+        return None
+    try:
+        expire_date = int(time.time()) + invite_ttl_seconds
+        # Prefer create_chat_invite_link with member_limit=1
+        try:
+            link_obj = bot.create_chat_invite_link(chat_id=VIP_CHAT_ID, expire_date=expire_date, member_limit=1)
+            link = link_obj.invite_link if hasattr(link_obj, 'invite_link') else link_obj
+        except Exception:
+            # Fallback to export_chat_invite_link (no single-use support)
+            link = bot.export_chat_invite_link(VIP_CHAT_ID)
+        return link
+    except Exception as e:
+        print(f"❌ Error creating single-use invite: {e}")
+        return None
+
+def handle_new_members(update, context):
+    """When new members join the VIP group, ensure they have a used token; otherwise remove them and instruct how to get one."""
+    chat = update.effective_chat
+    if not VIP_CHAT_ID or chat.id != VIP_CHAT_ID:
+        return
+
+    for member in update.message.new_chat_members:
+        # Skip bots
+        if member.is_bot:
+            continue
+
+        # Check if user has a used token
+        c.execute("SELECT token FROM join_tokens WHERE user_id=? AND used=1", (member.id,))
+        row = c.fetchone()
+        if row:
+            # Welcome message
+            context.bot.send_message(chat.id, f"✅ Welcome {member.full_name}! Your token has been verified.")
+            continue
+
+        # No valid token: kick then unban to allow rejoin after getting token
+        try:
+            context.bot.send_message(member.id, "You must verify ownership by sending your personal TMZ secret token to me in this chat before you can join the VIP group. Use /pay to create a payment request if you haven't paid yet.")
+        except Exception:
+            # Could not DM the user
+            pass
+
+        try:
+            context.bot.kick_chat_member(chat.id, member.id)
+            # unban to allow rejoin
+            context.bot.unban_chat_member(chat.id, member.id)
+            context.bot.send_message(chat.id, f"⛔ {member.full_name} was removed — please DM the bot your token to get a rejoin link.")
+        except Exception as e:
+            print(f"❌ Could not remove unverified member: {e}")
 
 def pay(update, context):
     """Handle /pay command"""
@@ -644,6 +794,12 @@ Thank you for your payment — let the game begin! 🚀🚀
                     )
                 except:
                     pass
+                # Generate and send one-time join token to user (DM)
+                try:
+                    token, expiry = generate_join_token_for_user(user_id, ttl_minutes=60)
+                    context.bot.send_message(user_id, f"✅ Payment verified. Your personal TMZ join token: {token}\nThis token is valid for 60 minutes. Use /redeem <token> or DM me the token to receive your single-use invite link.")
+                except Exception as e:
+                    print(f"❌ Could not send join token DM: {e}")
         else:
             error_message = "❌ PAYMENT VERIFICATION FAILED\n\n" + "\n".join(errors)
             error_message += f"\n\n📋 Expected Details:"
@@ -717,7 +873,7 @@ def main():
             return
         
         dispatcher = updater.dispatcher
-        
+
         # Add command handlers
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(CommandHandler("pay", pay))
@@ -725,11 +881,16 @@ def main():
         dispatcher.add_handler(CommandHandler("history", history))
         dispatcher.add_handler(CommandHandler("help", help_cmd))
         dispatcher.add_handler(CommandHandler("stats", stats))
-        
+        dispatcher.add_handler(CommandHandler("redeem", redeem_command))
+
         # Add message handlers
         dispatcher.add_handler(MessageHandler(Filters.photo, handle_image))
         dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
-        
+        # Private message handler for token redemption
+        dispatcher.add_handler(MessageHandler(Filters.private & Filters.text & ~Filters.command, handle_token_dm))
+        # New chat members handler to enforce token verification
+        dispatcher.add_handler(MessageHandler(Filters.status_update.new_chat_members, handle_new_members))
+
         # Clean up on startup
         cleanup_expired_payments()
         
