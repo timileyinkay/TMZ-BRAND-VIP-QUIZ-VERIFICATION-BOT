@@ -1103,14 +1103,15 @@ def main():
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
     # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ChatJoinRequestHandler
-    
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
+    from telegram.ext import filters
+
     # Create updater and dispatcher
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
     # Add handlers for private chats only
-    private_filter = Filters.private
+    private_filter = filters.ChatType.PRIVATE
     
     dp.add_handler(CommandHandler("start", start, filters=private_filter))
     dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
@@ -1128,8 +1129,8 @@ def main():
     dp.add_handler(ChatJoinRequestHandler(handle_join_request))
     
     # Handle receipt images and text messages - private only
-    dp.add_handler(MessageHandler(Filters.photo & private_filter, handle_receipt))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & private_filter, handle_message))
+    dp.add_handler(MessageHandler(filters.PHOTO & private_filter, handle_receipt))
+    dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & private_filter, handle_message))
     
     # Error handler
     dp.add_error_handler(error_handler)
