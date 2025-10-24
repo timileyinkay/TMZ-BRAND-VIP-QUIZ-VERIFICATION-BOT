@@ -1,22 +1,26 @@
+﻿# Environment variables
+.env
+
+# Python cache
 __pycache__/
 *.py[cod]
-*.so
-
-# Virtual environment
-.venv/
-venv/
-
-# Environment files
-.env
+*$py.class
 
 # Database
 *.db
-opay_payments.db
+*.sqlite3
 
 # Logs
 *.log
 
-# Editor files
+# IDE files
 .vscode/
-*.swp
+.idea/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
