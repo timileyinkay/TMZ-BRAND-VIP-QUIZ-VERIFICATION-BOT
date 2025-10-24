@@ -1106,8 +1106,8 @@ def main():
     from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
     from telegram.ext import filters
 
-    # Create updater and dispatcher
-    updater = Updater(TOKEN, use_context=True)
+    # Create updater and dispatcher - REMOVE use_context=True
+    updater = Updater(TOKEN)
     dp = updater.dispatcher
     
     # Add handlers for private chats only
@@ -1142,6 +1142,6 @@ def main():
     
     # Run until interrupted
     updater.idle()
-
+    
 if __name__ == '__main__':
     main()
