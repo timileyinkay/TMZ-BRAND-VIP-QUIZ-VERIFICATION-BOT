@@ -1046,7 +1046,11 @@ def handle_receipt(update, context):
         update.message.reply_text("❌ Error processing receipt. Please try again or contact support.")
 
 def handle_message(update, context):
-    """Handle text messages"""
+    """Handle text messages - ONLY in private chats"""
+    # Ignore group messages completely
+    if update.effective_chat.type != 'private':
+        return
+    
     user_id = update.effective_user.id
     text = update.message.text
     
@@ -1105,25 +1109,27 @@ def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
-    # Add handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("pay", pay))
-    dp.add_handler(CommandHandler("check", check))
-    dp.add_handler(CommandHandler("history", history))
-    dp.add_handler(CommandHandler("help", help_cmd))
-    dp.add_handler(CommandHandler("stats", stats))
-    dp.add_handler(CommandHandler("setprice", setprice))
-    dp.add_handler(CommandHandler("pricesettings", pricesettings))
-    dp.add_handler(CommandHandler("pendingrequests", pending_requests))
-    dp.add_handler(CommandHandler("approve", approve_request))
-    dp.add_handler(CommandHandler("decline", decline_request))
+    # Add handlers for private chats only
+    private_filter = Filters.private
     
-    # Handle join requests
+    dp.add_handler(CommandHandler("start", start, filters=private_filter))
+    dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
+    dp.add_handler(CommandHandler("check", check, filters=private_filter))
+    dp.add_handler(CommandHandler("history", history, filters=private_filter))
+    dp.add_handler(CommandHandler("help", help_cmd, filters=private_filter))
+    dp.add_handler(CommandHandler("stats", stats, filters=private_filter))
+    dp.add_handler(CommandHandler("setprice", setprice, filters=private_filter))
+    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=private_filter))
+    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
+    dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
+    dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
+    
+    # Handle join requests (this should work in groups)
     dp.add_handler(ChatJoinRequestHandler(handle_join_request))
     
-    # Handle receipt images and text messages
-    dp.add_handler(MessageHandler(Filters.photo, handle_receipt))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    # Handle receipt images and text messages - private only
+    dp.add_handler(MessageHandler(Filters.photo & private_filter, handle_receipt))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & private_filter, handle_message))
     
     # Error handler
     dp.add_error_handler(error_handler)
@@ -1131,6 +1137,7 @@ def main():
     # Start polling
     updater.start_polling()
     print("✅ Bot is now running and polling for updates...")
+    print("🔇 Bot will be silent in group chats")
     
     # Run until interrupted
     updater.idle()
