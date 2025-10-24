@@ -2,8 +2,9 @@ services:
   - type: web
     name: TMZ-BRAND-VIP-QUIZ-VERIFICATION-BOT
     env: python
+    plan: free
     buildCommand: |
-      apt-get update && apt-get install -y tesseract-ocr
+      apt-get update && apt-get install -y tesseract-ocr libtesseract-dev
+      pip install --upgrade pip
       pip install -r requirements.txt
-    # Use explicit python3 command to ensure the script runs with the interpreter
-    startCommand: python3 ocr_bot_fixed.py
+    startCommand: python ocr_bot_fixed.py

@@ -1,6 +1,6 @@
 python-telegram-bot==20.7
-Pillow==10.0.0
-pytesseract==0.3.10
-python-dotenv==1.0.0
-Flask==2.3.3
-pytz==2023.3
+Pillow>=10.0.1
+pytesseract>=0.3.10
+python-dotenv>=1.0.0
+Flask>=2.3.3
+pytz>=2023.3
