@@ -341,7 +341,89 @@ def extract_amount_from_text(extracted_text, expected_amount):
     print("❌ No valid amount found in receipt")
     return None
 
-def start(update, context):
+def extract_receipt_details(extracted_text, expected_ref, expected_receiver):
+    """Extract and verify all important details from receipt"""
+    if not extracted_text:
+        return None
+    
+    details = {
+        'amount': None,
+        'timestamp': None,
+        'receiver_found': False,
+        'reference_found': False,
+        'status_successful': False
+    }
+    
+    text_upper = extracted_text.upper()
+    lines = extracted_text.split('\n')
+    
+    # 1. Extract and verify amount (using existing function)
+    details['amount'] = extract_amount_from_text(extracted_text, None)
+    
+    # 2. Check for successful transaction status
+    if any(status in text_upper for status in ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'COMPLETE']):
+        details['status_successful'] = True
+    
+    # 3. Check for reference number in receipt
+    if expected_ref and expected_ref.upper() in text_upper:
+        details['reference_found'] = True
+    
+    # 4. Check for receiver name (partial matching for flexibility)
+    if expected_receiver:
+        # Try exact match first
+        if expected_receiver.upper() in text_upper:
+            details['receiver_found'] = True
+        else:
+            # Try partial matching (first 4 characters of each word)
+            expected_words = expected_receiver.upper().split()
+            receiver_found = False
+            for word in expected_words:
+                if len(word) >= 4 and word[:4] in text_upper:
+                    receiver_found = True
+                    break
+            details['receiver_found'] = receiver_found
+    
+    # 5. Extract timestamp
+    timestamp_patterns = [
+        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
+        r'(\d{1,2}:\d{2})',        # HH:MM
+        r'(\d{1,2}/\d{1,2}/\d{4})', # MM/DD/YYYY
+        r'(\d{1,2}-\d{1,2}-\d{4})', # MM-DD-YYYY
+    ]
+    
+    for pattern in timestamp_patterns:
+        timestamp_match = re.search(pattern, extracted_text)
+        if timestamp_match:
+            details['timestamp'] = timestamp_match.group(1)
+            break
+    
+    return details
+
+def extract_timestamp_from_text(extracted_text):
+    """Extract timestamp from OCR text"""
+    if not extracted_text:
+        return None
+    
+    # Common timestamp patterns in receipts
+    patterns = [
+        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
+        r'(\d{1,2}:\d{2})',        # HH:MM
+        r'(\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2})',  # MM/DD/YYYY HH:MM:SS
+        r'(\d{1,2}-\d{1,2}-\d{4} \d{1,2}:\d{2}:\d{2})',  # MM-DD-YYYY HH:MM:SS
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, extracted_text)
+        if match:
+            return match.group(1)
+    
+    return None
+
+# Import telegram components for v20.7
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, ChatJoinRequestHandler, ContextTypes, filters
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
@@ -371,9 +453,9 @@ Commands:
 
 ⚡ Once verified, you'll be automatically approved for the private VIP group! 💰🚀"""
 
-    update.message.reply_text(welcome_text)
+    await update.message.reply_text(welcome_text)
 
-def pay(update, context):
+async def pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /pay command - SIMPLIFIED VERSION"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
@@ -387,7 +469,7 @@ def pay(update, context):
     existing = c.fetchone()
     if existing:
         ref_existing, amount_existing = existing
-        update.message.reply_text(
+        await update.message.reply_text(
             f"⚠️ You already have a pending payment:\n"
             f"💰 Amount: ₦{amount_existing:,}\n"
             f"🔑 Reference: {ref_existing}\n\n"
@@ -451,10 +533,10 @@ PAYMENT INSTRUCTIONS:
     if TMZ_BRAND_FEE_NAIRA:
         instructions += f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,} (this is a platform fee)\n"
 
-    update.message.reply_text(instructions)
+    await update.message.reply_text(instructions)
     print(f"Payment request created: User {user_id}, Amount {current_amount}, Ref {ref}")
 
-def check(update, context):
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /check command"""
     user_id = update.effective_user.id
     
@@ -466,7 +548,7 @@ def check(update, context):
     row = c.fetchone()
     
     if not row:
-        update.message.reply_text("📭 No pending payments found. Use /pay to create one.")
+        await update.message.reply_text("📭 No pending payments found. Use /pay to create one.")
         return
     
     ref, amount, created_at, expiry_at = row
@@ -475,7 +557,7 @@ def check(update, context):
     if now > expiry_at:
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         conn.commit()
-        update.message.reply_text("⏰ Payment request expired. Use /pay to create a new one.")
+        await update.message.reply_text("⏰ Payment request expired. Use /pay to create a new one.")
         return
     
     time_left = int(expiry_at - now)
@@ -498,9 +580,9 @@ def check(update, context):
 🚨 Payment will expire in {minutes_left} minutes {seconds_left} seconds
     """
     
-    update.message.reply_text(status)
+    await update.message.reply_text(status)
 
-def history(update, context):
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show user's payment history"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
@@ -510,7 +592,7 @@ def history(update, context):
     rows = c.fetchall()
     
     if not rows:
-        update.message.reply_text("📊 No payment history found.")
+        await update.message.reply_text("📊 No payment history found.")
         return
     
     history_text = f"""
@@ -523,9 +605,9 @@ def history(update, context):
         history_text += f"✅ ₦{amount:,} - {ref}\n"
         history_text += f"   🕐 {verified_time}\n\n"
     
-    update.message.reply_text(history_text)
+    await update.message.reply_text(history_text)
 
-def help_cmd(update, context):
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
     current_amount = get_current_base_amount()
     help_text = f"""
@@ -561,14 +643,14 @@ Payment Process:
 Need Help?
 Ensure screenshot is clear and all details are visible.
     """
-    update.message.reply_text(help_text)
+    await update.message.reply_text(help_text)
 
-def stats(update, context):
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to show bot statistics"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     # Get statistics
@@ -621,31 +703,31 @@ Admin Commands:
 /decline <user_id> - Decline join request
     """
     
-    update.message.reply_text(stats_text)
+    await update.message.reply_text(stats_text)
 
-def setprice(update, context):
+async def setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to change the base amount"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     if not context.args:
-        update.message.reply_text("❌ Usage: /setprice <amount>\nExample: /setprice 2500")
+        await update.message.reply_text("❌ Usage: /setprice <amount>\nExample: /setprice 2500")
         return
     
     try:
         new_amount = int(context.args[0])
         if new_amount < 50 or new_amount > 100000:
-            update.message.reply_text("❌ Amount must be between ₦50 and ₦100,000")
+            await update.message.reply_text("❌ Amount must be between ₦50 and ₦100,000")
             return
         
         old_amount = get_current_base_amount()
         success = update_base_amount(new_amount, user_id)
         
         if success:
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ Price updated successfully!\n\n"
                 f"📊 Old Price: ₦{old_amount:,}\n"
                 f"💰 New Price: ₦{new_amount:,}\n\n"
@@ -653,17 +735,17 @@ def setprice(update, context):
             )
             print(f"Admin {user_id} changed price from ₦{old_amount:,} to ₦{new_amount:,}")
         else:
-            update.message.reply_text("❌ Failed to update price. Please try again.")
+            await update.message.reply_text("❌ Failed to update price. Please try again.")
             
     except ValueError:
-        update.message.reply_text("❌ Please provide a valid number (e.g. /setprice 2500)")
+        await update.message.reply_text("❌ Please provide a valid number (e.g. /setprice 2500)")
 
-def pricesettings(update, context):
+async def pricesettings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to view price settings"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     current_amount = get_current_base_amount()
@@ -690,15 +772,15 @@ Commands:
     else:
         settings_text = "❌ No price settings found."
     
-    update.message.reply_text(settings_text)
+    await update.message.reply_text(settings_text)
 
-def send_private_access(update, context, user_name, ref):
+async def send_private_access(update: Update, context: ContextTypes.DEFAULT_TYPE, user_name, ref):
     """Send private group access instructions WITHOUT sharing the link"""
     try:
         user_id = update.effective_user.id
         
         # Send success message
-        update.message.reply_text(
+        await update.message.reply_text(
             f"🎉 PAYMENT VERIFIED! 🎉\n\n"
             f"Welcome to TMZ BRAND VIP, {user_name}! 🚀\n\n"
             f"🔑 Reference: {ref}\n"
@@ -722,13 +804,11 @@ def send_private_access(update, context, user_name, ref):
         
     except Exception as e:
         print(f"❌ Error sending access instructions: {e}")
-        update.message.reply_text("✅ Payment verified! Please contact admin for group access instructions.")
+        await update.message.reply_text("✅ Payment verified! Please contact admin for group access instructions.")
 
-def handle_join_request(update, context):
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle join requests to the group - AUTO APPROVE VERIFIED USERS"""
     try:
-        from telegram import ChatJoinRequest
-        
         join_request = update.chat_join_request
         user_id = join_request.from_user.id
         username = join_request.from_user.username or "No username"
@@ -749,7 +829,7 @@ def handle_join_request(update, context):
         if has_verified_payment or is_pre_approved:
             # Auto-approve if payment is verified or pre-approved
             try:
-                context.bot.approve_chat_join_request(chat_id, user_id)
+                await context.bot.approve_chat_join_request(chat_id, user_id)
                 
                 # Update join_requests table
                 c.execute('''INSERT OR REPLACE INTO join_requests 
@@ -762,7 +842,7 @@ def handle_join_request(update, context):
                 
                 # Notify user
                 try:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         user_id,
                         f"🎉 Welcome to TMZ BRAND VIP, {first_name}! 🚀\n\n"
                         f"Your join request has been approved automatically!\n"
@@ -787,7 +867,7 @@ def handle_join_request(update, context):
             # Notify admin
             if ADMIN_ID:
                 try:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         ADMIN_ID,
                         f"📥 NEW JOIN REQUEST\n\n"
                         f"👤 User: {first_name} (@{username})\n"
@@ -805,19 +885,19 @@ def handle_join_request(update, context):
     except Exception as e:
         print(f"❌ Error handling join request: {e}")
 
-def pending_requests(update, context):
+async def pending_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to view pending join requests"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     c.execute("SELECT user_id, username, first_name, request_time FROM join_requests WHERE status='pending' ORDER BY request_time")
     rows = c.fetchall()
     
     if not rows:
-        update.message.reply_text("📭 No pending join requests.")
+        await update.message.reply_text("📭 No pending join requests.")
         return
     
     requests_text = "📥 PENDING JOIN REQUESTS\n\n"
@@ -829,18 +909,18 @@ def pending_requests(update, context):
         requests_text += f"🕒 Requested: {request_date}\n"
         requests_text += f"⚡ Commands:\n/approve_{user_id} /decline_{user_id}\n\n"
     
-    update.message.reply_text(requests_text)
+    await update.message.reply_text(requests_text)
 
-def approve_request(update, context):
+async def approve_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to approve a join request"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     if not context.args:
-        update.message.reply_text("❌ Usage: /approve <user_id>\nExample: /approve 123456789")
+        await update.message.reply_text("❌ Usage: /approve <user_id>\nExample: /approve 123456789")
         return
     
     try:
@@ -851,7 +931,7 @@ def approve_request(update, context):
         request = c.fetchone()
         
         if not request:
-            update.message.reply_text("❌ No pending join request found for this user ID.")
+            await update.message.reply_text("❌ No pending join request found for this user ID.")
             return
         
         username, first_name = request
@@ -859,18 +939,18 @@ def approve_request(update, context):
         # Approve the join request
         try:
             if GROUP_ID:
-                context.bot.approve_chat_join_request(GROUP_ID, target_user_id)
+                await context.bot.approve_chat_join_request(GROUP_ID, target_user_id)
             
             # Update database
             c.execute("UPDATE join_requests SET status='approved', processed_by=?, processed_time=? WHERE user_id=?", 
                      (user_id, time.time(), target_user_id))
             conn.commit()
             
-            update.message.reply_text(f"✅ Join request for {first_name} (@{username}) approved!")
+            await update.message.reply_text(f"✅ Join request for {first_name} (@{username}) approved!")
             
             # Notify user
             try:
-                context.bot.send_message(
+                await context.bot.send_message(
                     target_user_id,
                     f"🎉 Your join request for TMZ BRAND VIP has been approved! 🚀\n\n"
                     f"Welcome to the private VIP group, {first_name}!\n"
@@ -880,21 +960,21 @@ def approve_request(update, context):
                 pass
                 
         except Exception as e:
-            update.message.reply_text(f"❌ Error approving request: {e}")
+            await update.message.reply_text(f"❌ Error approving request: {e}")
             
     except ValueError:
-        update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
+        await update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
 
-def decline_request(update, context):
+async def decline_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to decline a join request"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
-        update.message.reply_text("❌ Admin only command.")
+        await update.message.reply_text("❌ Admin only command.")
         return
     
     if not context.args:
-        update.message.reply_text("❌ Usage: /decline <user_id>\nExample: /decline 123456789")
+        await update.message.reply_text("❌ Usage: /decline <user_id>\nExample: /decline 123456789")
         return
     
     try:
@@ -905,7 +985,7 @@ def decline_request(update, context):
         request = c.fetchone()
         
         if not request:
-            update.message.reply_text("❌ No pending join request found for this user ID.")
+            await update.message.reply_text("❌ No pending join request found for this user ID.")
             return
         
         username, first_name = request
@@ -913,18 +993,18 @@ def decline_request(update, context):
         # Decline the join request
         try:
             if GROUP_ID:
-                context.bot.decline_chat_join_request(GROUP_ID, target_user_id)
+                await context.bot.decline_chat_join_request(GROUP_ID, target_user_id)
             
             # Update database
             c.execute("UPDATE join_requests SET status='declined', processed_by=?, processed_time=? WHERE user_id=?", 
                      (user_id, time.time(), target_user_id))
             conn.commit()
             
-            update.message.reply_text(f"❌ Join request for {first_name} (@{username}) declined.")
+            await update.message.reply_text(f"❌ Join request for {first_name} (@{username}) declined.")
             
             # Notify user
             try:
-                context.bot.send_message(
+                await context.bot.send_message(
                     target_user_id,
                     f"❌ Your join request for TMZ BRAND VIP has been declined.\n\n"
                     f"If you believe this is an error, please contact support."
@@ -933,70 +1013,12 @@ def decline_request(update, context):
                 pass
                 
         except Exception as e:
-            update.message.reply_text(f"❌ Error declining request: {e}")
+            await update.message.reply_text(f"❌ Error declining request: {e}")
             
     except ValueError:
-        update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
+        await update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
 
-def extract_receipt_details(extracted_text, expected_ref, expected_receiver):
-    """Extract and verify all important details from receipt"""
-    if not extracted_text:
-        return None
-    
-    details = {
-        'amount': None,
-        'timestamp': None,
-        'receiver_found': False,
-        'reference_found': False,
-        'status_successful': False
-    }
-    
-    text_upper = extracted_text.upper()
-    lines = extracted_text.split('\n')
-    
-    # 1. Extract and verify amount (using existing function)
-    details['amount'] = extract_amount_from_text(extracted_text, None)
-    
-    # 2. Check for successful transaction status
-    if any(status in text_upper for status in ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'COMPLETE']):
-        details['status_successful'] = True
-    
-    # 3. Check for reference number in receipt
-    if expected_ref and expected_ref.upper() in text_upper:
-        details['reference_found'] = True
-    
-    # 4. Check for receiver name (partial matching for flexibility)
-    if expected_receiver:
-        # Try exact match first
-        if expected_receiver.upper() in text_upper:
-            details['receiver_found'] = True
-        else:
-            # Try partial matching (first 4 characters of each word)
-            expected_words = expected_receiver.upper().split()
-            receiver_found = False
-            for word in expected_words:
-                if len(word) >= 4 and word[:4] in text_upper:
-                    receiver_found = True
-                    break
-            details['receiver_found'] = receiver_found
-    
-    # 5. Extract timestamp
-    timestamp_patterns = [
-        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
-        r'(\d{1,2}:\d{2})',        # HH:MM
-        r'(\d{1,2}/\d{1,2}/\d{4})', # MM/DD/YYYY
-        r'(\d{1,2}-\d{1,2}-\d{4})', # MM-DD-YYYY
-    ]
-    
-    for pattern in timestamp_patterns:
-        timestamp_match = re.search(pattern, extracted_text)
-        if timestamp_match:
-            details['timestamp'] = timestamp_match.group(1)
-            break
-    
-    return details
-
-def handle_receipt(update, context):
+async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle receipt image upload and verification - COMPREHENSIVE CHECKING"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
@@ -1006,7 +1028,7 @@ def handle_receipt(update, context):
     row = c.fetchone()
     
     if not row:
-        update.message.reply_text("❌ No pending payment found. Use /pay to create a payment request first.")
+        await update.message.reply_text("❌ No pending payment found. Use /pay to create a payment request first.")
         return
     
     ref, expected_amount, expiry_at = row
@@ -1015,31 +1037,31 @@ def handle_receipt(update, context):
     if time.time() > expiry_at:
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         conn.commit()
-        update.message.reply_text("⏰ Payment request expired. Use /pay to create a new one.")
+        await update.message.reply_text("⏰ Payment request expired. Use /pay to create a new one.")
         return
     
     # Check if message has photo
     if not update.message.photo:
-        update.message.reply_text("❌ Please upload a screenshot of your payment receipt.")
+        await update.message.reply_text("❌ Please upload a screenshot of your payment receipt.")
         return
     
     # Get the highest quality photo
-    photo_file = update.message.photo[-1].get_file()
+    photo_file = await update.message.photo[-1].get_file()
     
     # Download photo data
-    update.message.reply_text("🔍 Processing receipt... Please wait ⏳")
+    await update.message.reply_text("🔍 Processing receipt... Please wait ⏳")
     
     try:
         # Download image data
         photo_data = io.BytesIO()
-        photo_file.download(out=photo_data)
+        await photo_file.download_to_memory(out=photo_data)
         photo_data.seek(0)
         
         # Extract text using OCR
         extracted_text = extract_text_from_image(photo_data.getvalue())
         
         if not extracted_text:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❌ Could not read receipt text. Please ensure:\n\n"
                 "• Screenshot is clear and readable\n"
                 "• All text is visible\n"
@@ -1052,7 +1074,7 @@ def handle_receipt(update, context):
         receipt_details = extract_receipt_details(extracted_text, ref, RECEIVER_NAME)
         
         if not receipt_details:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❌ Could not process receipt details. Please try again with a clearer screenshot."
             )
             return
@@ -1093,7 +1115,7 @@ def handle_receipt(update, context):
             error_message += f"\n👤 Expected Receiver: {RECEIVER_NAME}"
             error_message += "\n\nPlease ensure your receipt shows all the required details and try again."
             
-            update.message.reply_text(error_message)
+            await update.message.reply_text(error_message)
             return
 
         # ALL CHECKS PASSED - Payment verified successfully!
@@ -1129,22 +1151,22 @@ def handle_receipt(update, context):
 🎉 Welcome to TMZ BRAND VIP! 🚀
         """
         
-        update.message.reply_text(success_message)
+        await update.message.reply_text(success_message)
         
         # Send private access instructions (NO LINK SHARED)
-        send_private_access(update, context, user_name, ref)
+        await send_private_access(update, context, user_name, ref)
         
         # Notify admin with detailed information
         if ADMIN_ID:
             try:
-                context.bot.send_message(
+                await context.bot.send_message(
                     ADMIN_ID,
                     f"💰 PAYMENT VERIFIED - DETAILED\n\n"
                     f"👤 User: {user_name}\n"
                     f"🆔 ID: {user_id}\n"
                     f"💰 Amount: ₦{expected_amount:,}\n"
                     f"🔑 Reference: {ref}\n"
-                    f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}\n"
+                    f"⏰ Time: {datetime.now().strftime('%H:%M-%d %H:%M:%S')}\n"
                     f"📊 OCR Results:\n"
                     f"  - Amount Found: ₦{receipt_details['amount']:,}\n"
                     f"  - Status: {'Successful' if receipt_details['status_successful'] else 'Unknown'}\n"
@@ -1157,29 +1179,9 @@ def handle_receipt(update, context):
                 
     except Exception as e:
         print(f"❌ Error processing receipt: {e}")
-        update.message.reply_text("❌ Error processing receipt. Please try again or contact support.")
+        await update.message.reply_text("❌ Error processing receipt. Please try again or contact support.")
 
-def extract_timestamp_from_text(extracted_text):
-    """Extract timestamp from OCR text"""
-    if not extracted_text:
-        return None
-    
-    # Common timestamp patterns in receipts
-    patterns = [
-        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
-        r'(\d{1,2}:\d{2})',        # HH:MM
-        r'(\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2})',  # MM/DD/YYYY HH:MM:SS
-        r'(\d{1,2}-\d{1,2}-\d{4} \d{1,2}:\d{2}:\d{2})',  # MM-DD-YYYY HH:MM:SS
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, extracted_text)
-        if match:
-            return match.group(1)
-    
-    return None
-
-def handle_message(update, context):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages - ONLY in private chats"""
     # Ignore group messages completely
     if update.effective_chat.type != 'private':
@@ -1198,7 +1200,7 @@ def handle_message(update, context):
     
     if row:
         ref = row[0]
-        update.message.reply_text(
+        await update.message.reply_text(
             f"📸 Please upload a SCREENSHOT of your payment receipt for reference: {ref}\n\n"
             f"Ensure the screenshot shows:\n"
             f"• Amount: ₦{get_current_base_amount():,}\n"
@@ -1207,79 +1209,66 @@ def handle_message(update, context):
             f"• Transaction status: Successful"
         )
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             "🤖 TMZ BRAND VIP Payment Bot\n\n"
             "Use /pay to create a payment request\n"
             "Use /help for instructions\n"
             "Use /start to begin"
         )
 
-def error_handler(update, context):
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors"""
     print(f"❌ Error: {context.error}")
     if update and update.effective_message:
-        update.effective_message.reply_text("❌ An error occurred. Please try again.")
-
-# Flask webhook routes for deployment
-@app.route('/')
-def home():
-    return "🤖 TMZ BRAND VIP Payment Bot is running!"
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Handle Telegram webhook updates"""
-    update = telegram.Update.de_json(request.get_json(), bot)
-    dispatcher.process_update(update)
-    return 'OK'
+        await update.effective_message.reply_text("❌ An error occurred. Please try again.")
 
 def main():
     """Main function to start the bot"""
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
-    # Import telegram components
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
-    
-    # Create updater and dispatcher (OLD SYNTAX)
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
-    
-    # Define filters (OLD SYNTAX)
-    private_filter = Filters.private
-    photo_filter = Filters.photo & private_filter
-    text_filter = Filters.text & ~Filters.command & private_filter
+    # Create application
+    application = Application.builder().token(TOKEN).build()
     
     # Add handlers for private chats only
-    dp.add_handler(CommandHandler("start", start, filters=private_filter))
-    dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
-    dp.add_handler(CommandHandler("check", check, filters=private_filter))
-    dp.add_handler(CommandHandler("history", history, filters=private_filter))
-    dp.add_handler(CommandHandler("help", help_cmd, filters=private_filter))
-    dp.add_handler(CommandHandler("stats", stats, filters=private_filter))
-    dp.add_handler(CommandHandler("setprice", setprice, filters=private_filter))
-    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=private_filter))
-    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
-    dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
-    dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
+    application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("pay", pay, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("check", check, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("history", history, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("help", help_cmd, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("stats", stats, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("setprice", setprice, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("pricesettings", pricesettings, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("pendingrequests", pending_requests, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("approve", approve_request, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("decline", decline_request, filters=filters.ChatType.PRIVATE))
     
     # Handle join requests
-    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
     
     # Handle receipt images and text messages - private only
-    dp.add_handler(MessageHandler(photo_filter, handle_receipt))
-    dp.add_handler(MessageHandler(text_filter, handle_message))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_receipt))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_message))
     
     # Error handler
-    dp.add_error_handler(error_handler)
+    application.add_error_handler(error_handler)
     
     # Start polling
-    updater.start_polling()
     print("✅ Bot is now running and polling for updates...")
     print("🔇 Bot will be silent in group chats")
     
-    # Keep the bot running
-    updater.idle()
-    # Start Flask app on Render's port (this will block)
+    # Start Flask app for webhook compatibility
     port = int(os.environ.get('PORT', 10000))
-    print(f"🚀 Starting Flask server on port {port}...")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
- 
+    
+    def start_flask():
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    # Start Flask in a separate thread
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
+    print(f"🚀 Flask server started on port {port}")
+    
+    # Start polling (blocks)
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
