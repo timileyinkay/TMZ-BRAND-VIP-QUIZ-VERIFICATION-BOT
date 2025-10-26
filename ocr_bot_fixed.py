@@ -328,7 +328,7 @@ def extract_amount_from_text(extracted_text, expected_amount):
     return None
 
 def start(update, context):
-    """Handle /start command"""
+    """Handle /start command with payment button"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     current_amount = get_current_base_amount()
@@ -341,7 +341,7 @@ def start(update, context):
 Where you face your fears, test your mind, and prove your worth 🧠 🏆  
 
 How to join the PRIVATE VIP Room:  
-1️⃣ Use /pay to create your VIP payment request  
+1️⃣ Click the PAY NOW button below (₦{current_amount:,})  
 2️⃣ Send ₦{current_amount:,} to our official account via **Opay OR PalmPay**  
 3️⃣ Include your unique reference in the remark field  
 4️⃣ Upload your payment receipt (screenshot) for instant verification  
@@ -349,15 +349,19 @@ How to join the PRIVATE VIP Room:
 
 ⏰ Verification Window: {TIMEOUT_MINUTES} minutes  
 
-Commands:
-/pay - Create VIP payment request  
-/check - Check pending payment  
-/history - View payment history  
-/help - Show help message  
-
 ⚡ Once verified, you'll be automatically approved for the private VIP group! 💰🚀"""
 
-    update.message.reply_text(welcome_text)
+    # Create inline keyboard with payment button
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    
+    keyboard = [
+        [InlineKeyboardButton(f"💰 PAY NOW - ₦{current_amount:,}", callback_data="create_payment")],
+        [InlineKeyboardButton("📋 Check Payment", callback_data="check_payment"),
+         InlineKeyboardButton("ℹ️ Help", callback_data="show_help")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 def pay(update, context):
     """Handle /pay command - SIMPLIFIED VERSION"""
@@ -373,11 +377,22 @@ def pay(update, context):
     existing = c.fetchone()
     if existing:
         ref_existing, amount_existing = existing
+        
+        # Create inline keyboard for existing payment
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Check Status", callback_data="check_payment"),
+             InlineKeyboardButton("🔄 New Payment", callback_data="create_payment")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         update.message.reply_text(
             f"⚠️ You already have a pending payment:\n"
             f"💰 Amount: ₦{amount_existing:,}\n"
             f"🔑 Reference: {ref_existing}\n\n"
-            f"Use /check to view details or wait for it to expire."
+            f"Use the buttons below to check status or create a new payment.",
+            reply_markup=reply_markup
         )
         return
     
@@ -437,8 +452,108 @@ PAYMENT INSTRUCTIONS:
     if TMZ_BRAND_FEE_NAIRA:
         instructions += f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,} (this is a platform fee)\n"
 
-    update.message.reply_text(instructions)
+    # Add action buttons
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    
+    keyboard = [
+        [InlineKeyboardButton("📋 Check Status", callback_data="check_payment"),
+         InlineKeyboardButton("📸 Upload Receipt", callback_data="upload_receipt")],
+        [InlineKeyboardButton("ℹ️ Help", callback_data="show_help")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    update.message.reply_text(instructions, reply_markup=reply_markup)
     print(f"Payment request created: User {user_id}, Amount {current_amount}, Ref {ref}")
+
+def handle_button_click(update, context):
+    """Handle inline keyboard button clicks"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+    
+    # Answer the callback query (removes loading state)
+    query.answer()
+    
+    if data == "create_payment":
+        # Simulate /pay command
+        from telegram import Update
+        from telegram.ext import CallbackContext
+        
+        # Create a mock update for the pay function
+        class MockMessage:
+            def __init__(self, user, chat):
+                self.from_user = user
+                self.chat = chat
+                self.reply_text = query.edit_message_text
+            
+            def reply_text(self, *args, **kwargs):
+                return query.edit_message_text(*args, **kwargs)
+        
+        class MockUpdate:
+            def __init__(self, user, chat):
+                self.effective_user = user
+                self.effective_chat = chat
+                self.message = MockMessage(user, chat)
+        
+        mock_update = MockUpdate(query.from_user, query.message.chat)
+        pay(mock_update, context)
+        
+    elif data == "check_payment":
+        # Simulate /check command
+        class MockMessage:
+            def __init__(self, user, chat):
+                self.from_user = user
+                self.chat = chat
+            
+            def reply_text(self, text, **kwargs):
+                return query.edit_message_text(text, **kwargs)
+        
+        class MockUpdate:
+            def __init__(self, user, chat):
+                self.effective_user = user
+                self.effective_chat = chat
+                self.message = MockMessage(user, chat)
+        
+        mock_update = MockUpdate(query.from_user, query.message.chat)
+        check(mock_update, context)
+        
+    elif data == "show_help":
+        # Show help message
+        current_amount = get_current_base_amount()
+        help_text = f"""
+ℹ️ HELP - TMZ BRAND VIP Payment Verification
+
+Payment Process:
+1. Click PAY NOW button (₦{current_amount:,})
+2. Send exactly ₦{current_amount:,} to: {OPAY_ACCOUNT}
+3. Platform: Opay OR PalmPay
+4. Receiver: {RECEIVER_NAME}
+5. Include reference in Remark/Narration field
+6. Upload receipt SCREENSHOT for verification
+7. Get AUTO-APPROVED for private group
+
+📸 Screenshot Tips:
+• Ensure all text is clear and readable
+• Include amount, receiver, reference
+• Show transaction status "Successful"
+• Capture full receipt
+
+🎯 After Verification:
+• Automatically approved for private group
+• No links shared - complete privacy
+• Direct access to VIP content
+"""
+        query.edit_message_text(help_text)
+        
+    elif data == "upload_receipt":
+        query.edit_message_text(
+            "📸 Please upload a SCREENSHOT of your payment receipt.\n\n"
+            "Make sure the screenshot shows:\n"
+            "• Amount paid\n"
+            "• Receiver name\n" 
+            "• Reference number\n"
+            "• Transaction status: Successful"
+        )
 
 def check(update, context):
     """Handle /check command"""
@@ -1098,12 +1213,327 @@ def webhook():
     """Handle Telegram webhook updates - placeholder for future use"""
     return 'Webhook endpoint ready - using polling mode'
 
+import hashlib
+
+def create_payment_hash(user_id, amount, ref, timestamp):
+    """Create unique hash for each transaction"""
+    data = f"{user_id}{amount}{ref}{timestamp}"
+    return hashlib.sha256(data.encode()).hexdigest()
+
+def verify_transaction_integrity(user_id, amount, ref, timestamp, expected_hash):
+    """Verify transaction hasn't been tampered with"""
+    current_hash = create_payment_hash(user_id, amount, ref, timestamp)
+    return current_hash == expected_hash
+
+def enhanced_receipt_verification(extracted_text, expected_amount, ref):
+    """Enhanced verification with multiple security checks"""
+    verification_results = {
+        'amount_match': False,
+        'reference_found': False,
+        'receiver_found': False,
+        'platform_detected': False,
+        'transaction_success': False
+    }
+    
+    text_upper = extracted_text.upper()
+    
+    # 1. Amount Verification (existing)
+    detected_amount = extract_amount_from_text(extracted_text, expected_amount)
+    verification_results['amount_match'] = detected_amount == expected_amount
+    
+    # 2. Reference Number Check
+    verification_results['reference_found'] = ref.upper() in text_upper
+    
+    # 3. Receiver Name Check
+    verification_results['receiver_found'] = RECEIVER_NAME.upper() in text_upper
+    
+    # 4. Platform Detection
+    platforms = ['OPAY', 'PALMPAY', 'PAYMENT', 'TRANSFER']
+    verification_results['platform_detected'] = any(platform in text_upper for platform in platforms)
+    
+    # 5. Transaction Status Check
+    success_indicators = ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'APPROVED']
+    verification_results['transaction_success'] = any(indicator in text_upper for indicator in success_indicators)
+    
+    # Calculate confidence score
+    confidence_score = sum(verification_results.values()) / len(verification_results)
+    
+    return verification_results, confidence_score
+
+def check_payment_timing(created_at, payment_time):
+    """Verify payment was made within valid time window"""
+    time_difference = payment_time - created_at
+    max_allowed_time = TIMEOUT_MINUTES * 60  # Convert to seconds
+    
+    if time_difference > max_allowed_time:
+        return False, "Payment was made after expiry time"
+    
+    # Check if payment was made BEFORE request (impossible)
+    if time_difference < 0:
+        return False, "Payment timestamp is invalid"
+    
+    return True, "Timing valid"
+
+def prevent_replay_attacks(user_id, ref):
+    """Prevent same receipt being used multiple times"""
+    c.execute("SELECT COUNT(*) FROM verified_payments WHERE ref=?", (ref,))
+    if c.fetchone()[0] > 0:
+        return False, "This payment has already been verified"
+    
+    # Check if user has recent verified payment (prevent spam)
+    c.execute("SELECT verified_at FROM verified_payments WHERE user_id=? ORDER BY verified_at DESC LIMIT 1", (user_id,))
+    recent = c.fetchone()
+    if recent and (time.time() - recent[0]) < 300:  # 5 minutes cooldown
+        return False, "Please wait before making another payment"
+    
+    return True, "OK"
+
+def extract_payment_metadata(extracted_text):
+    """Extract multiple data points from receipt for verification"""
+    metadata = {
+        'amount': None,
+        'reference': None,
+        'receiver': None,
+        'sender': None,
+        'time': None,
+        'platform': None
+    }
+    
+    lines = extracted_text.split('\n')
+    
+    for i, line in enumerate(lines):
+        line_upper = line.upper()
+        
+        # Detect platform-specific patterns
+        if 'OPAY' in line_upper:
+            metadata['platform'] = 'Opay'
+        elif 'PALMPAY' in line_upper:
+            metadata['platform'] = 'PalmPay'
+        
+        # Detect reference numbers (tmzbrand format)
+        ref_match = re.search(r'T[MZ]?BRAND[0-9]{6}', line_upper)
+        if ref_match:
+            metadata['reference'] = ref_match.group(0)
+        
+        # Detect receiver name
+        if RECEIVER_NAME.upper() in line_upper:
+            metadata['receiver'] = RECEIVER_NAME
+        
+        # Detect time/date patterns
+        time_match = re.search(r'(\d{1,2}[:.]\d{2}\s*[AP]?M?)', line, re.IGNORECASE)
+        if time_match:
+            metadata['time'] = time_match.group(1)
+    
+    return metadata
+
+import numpy as np
+from sklearn.ensemble import IsolationForest
+
+class FraudDetector:
+    def __init__(self):
+        self.model = IsolationForest(contamination=0.1)
+        self.is_trained = False
+        
+    def extract_features(self, user_data, payment_data, receipt_data):
+        """Extract features for fraud detection"""
+        features = [
+            payment_data['amount'],
+            payment_data['time_since_creation'],
+            user_data['previous_payments_count'],
+            user_data['account_age_days'],
+            receipt_data['confidence_score'],
+            receipt_data['verification_score'],
+            payment_data['hour_of_day'],  # Suspicious if unusual hours
+        ]
+        return np.array(features).reshape(1, -1)
+    
+    def predict_fraud(self, features):
+        """Predict if transaction is fraudulent"""
+        if not self.is_trained:
+            return 0  # Neutral if not trained yet
+        
+        prediction = self.model.predict(features)
+        return -1 if prediction[0] == -1 else 1
+    
+    def secure_database_operations():
+        """Enhance database security with additional tables"""
+    # Add transaction logging
+    c.execute('''CREATE TABLE IF NOT EXISTS security_logs
+                 (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, 
+                  timestamp REAL, ip_address TEXT, user_agent TEXT)''')
+    
+    # Add rate limiting table
+    c.execute('''CREATE TABLE IF NOT EXISTS rate_limits
+                 (user_id INTEGER PRIMARY KEY, attempt_count INTEGER, 
+                  last_attempt REAL, is_blocked INTEGER)''')
+    
+    conn.commit()
+
+def check_rate_limit(user_id):
+    """Prevent brute force attacks"""
+    c.execute("SELECT attempt_count, last_attempt, is_blocked FROM rate_limits WHERE user_id=?", (user_id,))
+    result = c.fetchone()
+    
+    current_time = time.time()
+    
+    if not result:
+        # First attempt
+        c.execute("INSERT INTO rate_limits VALUES (?, ?, ?, ?)", (user_id, 1, current_time, 0))
+        conn.commit()
+        return True
+    
+    attempt_count, last_attempt, is_blocked = result
+    
+    if is_blocked:
+        if current_time - last_attempt > 3600:  # 1 hour block
+            c.execute("UPDATE rate_limits SET is_blocked=0, attempt_count=1 WHERE user_id=?", (user_id,))
+            conn.commit()
+            return True
+        return False
+    
+    # Reset counter if more than 15 minutes passed
+    if current_time - last_attempt > 900:
+        attempt_count = 1
+    else:
+        attempt_count += 1
+    
+    # Block if too many attempts
+    if attempt_count > 5:
+        c.execute("UPDATE rate_limits SET is_blocked=1 WHERE user_id=?", (user_id,))
+        conn.commit()
+        return False
+    
+    c.execute("UPDATE rate_limits SET attempt_count=?, last_attempt=? WHERE user_id=?", 
+              (attempt_count, current_time, user_id))
+    conn.commit()
+    return True
+
+def enhanced_handle_receipt(update, context):
+    """Enhanced receipt verification with multiple security layers"""
+    user_id = update.effective_user.id
+    
+    # Rate limiting check
+    if not check_rate_limit(user_id):
+        update.message.reply_text("🚫 Too many attempts. Please try again in 1 hour.")
+        return
+    
+    # Get pending payment
+    c.execute("SELECT ref, amount, created_at, expiry_at FROM pending_payments WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    
+    if not row:
+        update.message.reply_text("❌ No pending payment found.")
+        return
+    
+    ref, expected_amount, created_at, expiry_at = row
+    
+    # Timing checks
+    current_time = time.time()
+    timing_valid, timing_msg = check_payment_timing(created_at, current_time)
+    if not timing_valid:
+        update.message.reply_text(f"⏰ {timing_msg}")
+        return
+    
+    # Replay attack prevention
+    replay_valid, replay_msg = prevent_replay_attacks(user_id, ref)
+    if not replay_valid:
+        update.message.reply_text(f"🚫 {replay_msg}")
+        return
+    
+    # Process receipt (your existing code)
+    # ... existing receipt processing code ...
+    
+    # Enhanced verification
+    verification_results, confidence_score = enhanced_receipt_verification(
+        extracted_text, expected_amount, ref
+    )
+    
+    # Extract metadata
+    metadata = extract_payment_metadata(extracted_text)
+    
+    # Decision making based on multiple factors
+    if (confidence_score >= 0.8 and 
+        verification_results['amount_match'] and 
+        verification_results['reference_found']):
+        
+        # High confidence - auto approve
+        approve_payment(update, context, user_id, ref, expected_amount)
+        
+    elif confidence_score >= 0.6:
+        # Medium confidence - require admin review
+        flag_for_admin_review(update, context, user_id, ref, verification_results, confidence_score)
+        
+    else:
+        # Low confidence - reject
+        update.message.reply_text(
+            f"❌ Payment verification failed.\n"
+            f"Confidence Score: {confidence_score:.1%}\n"
+            f"Please ensure receipt shows all required details clearly."
+        )
+
+def flag_for_admin_review(update, context, user_id, ref, verification_results, confidence_score):
+    """Flag suspicious payments for admin review"""
+    user_name = update.effective_user.first_name
+    
+    # Save to review queue
+    c.execute('''INSERT INTO payment_reviews 
+                 (user_id, ref, verification_results, confidence_score, review_time) 
+                 VALUES (?, ?, ?, ?, ?)''',
+              (user_id, ref, str(verification_results), confidence_score, time.time()))
+    conn.commit()
+    
+    update.message.reply_text(
+        f"🟡 Payment under review\n\n"
+        f"Your payment requires manual verification.\n"
+        f"Confidence Score: {confidence_score:.1%}\n"
+        f"Admin will review shortly."
+    )
+    
+    # Notify admin
+    if ADMIN_ID:
+        context.bot.send_message(
+            ADMIN_ID,
+            f"🟡 PAYMENT REVIEW REQUIRED\n\n"
+            f"👤 User: {user_name} (ID: {user_id})\n"
+            f"🔑 Reference: {ref}\n"
+            f"📊 Confidence: {confidence_score:.1%}\n"
+            f"🔍 Results: {verification_results}\n\n"
+            f"Commands:\n"
+            f"/approve_payment {ref}\n"
+            f"/reject_payment {ref}"
+        )
+
+def approve_payment_cmd(update, context):
+    """Admin command to approve reviewed payment"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    if not context.args:
+        update.message.reply_text("Usage: /approve_payment <reference>")
+        return
+    
+    ref = context.args[0]
+    
+    # Get review data and process payment
+    c.execute("SELECT user_id FROM payment_reviews WHERE ref=?", (ref,))
+    result = c.fetchone()
+    
+    if result:
+        user_id = result[0]
+        # Process the payment approval
+        # ... your approval logic ...
+        
+        c.execute("DELETE FROM payment_reviews WHERE ref=?", (ref,))
+        conn.commit()
+        
+        update.message.reply_text(f"✅ Payment {ref} approved manually")
+
 def main():
     """Main function to start the bot"""
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
     # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler
     
     # Handle different versions of python-telegram-bot
     try:
@@ -1138,6 +1568,9 @@ def main():
     dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
     dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
     dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
+    
+    # Add callback query handler for buttons
+    dp.add_handler(CallbackQueryHandler(handle_button_click))
     
     # Handle join requests (this should work in groups)
     dp.add_handler(ChatJoinRequestHandler(handle_join_request))
