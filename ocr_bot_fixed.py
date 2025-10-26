@@ -2,6 +2,7 @@
 import sqlite3
 import time
 import random
+import threading
 import re
 from datetime import datetime
 import pytesseract
@@ -205,7 +206,7 @@ def extract_text_from_image(image_data):
         return None
 
 def extract_amount_from_text(extracted_text, expected_amount):
-    """Extract payment amount from OCR text - UPDATED FOR BOTH OPAY & PALMPAY"""
+    """Extract payment amount from OCR text - UPDATED TO DETECT ANY AMOUNT"""
     if not extracted_text:
         return None
     
@@ -219,81 +220,76 @@ def extract_amount_from_text(extracted_text, expected_amount):
     text_upper = extracted_text.upper()
     lines = extracted_text.split('\n')
     
-    # SPECIAL CASE: Look for PalmPay amount format (centered amount with symbols)
+    # STRATEGY 1: Look for the main transaction amount with various formats
     for i, line in enumerate(lines):
         clean_line = line.strip()
         
-        # PalmPay specific pattern: number with .00 surrounded by symbols or spaces
-        palmPay_match = re.search(r'[#\s]*([0-9,]+\.?[0-9]{2})[#\s]*', clean_line)
-        if palmPay_match:
-            try:
-                amount = float(palmPay_match.group(1).replace(',', ''))
-                if 50 <= amount <= 1000000 and amount != 2025.0 and amount != 2024.0 and amount != 2026.0:
-                    print(f"💰 PalmPay formatted amount found: ₦{amount}")
-                    return amount
-            except ValueError:
-                pass
-    
-    # STRATEGY 1: Look for the main transaction amount (usually at top with 2 decimal places)
-    for i, line in enumerate(lines):
-        clean_line = line.strip()
-        
-        # Skip obvious date lines
-        if any(date_word in clean_line.upper() for date_word in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', '2025', '2024', '2026']):
+        # Skip obvious date lines and common non-amount numbers
+        if any(date_word in clean_line.upper() for date_word in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', '2025', '2024', '2026', '2027']):
             continue
             
-        # Look for lines that contain numbers with 2 decimal places (money format)
-        decimal_matches = re.findall(r'[0-9,]+\.?[0-9]{2}', clean_line)
-        for match in decimal_matches:
-            try:
-                amount = float(match.replace(',', ''))
-                # Valid amount range and not a date
-                if 50 <= amount <= 1000000 and amount != 2025.0 and amount != 2024.0 and amount != 2026.0:
-                    print(f"💰 Decimal amount found: ₦{amount}")
-                    return amount
-            except ValueError:
-                continue
+        # Skip phone numbers and IDs (common patterns)
+        if re.search(r'\b\d{10,15}\b', clean_line):  # Phone numbers
+            continue
+        if re.search(r'\b\d{4}[- ]?\d{4}[- ]?\d{4}\b', clean_line):  # Card numbers
+            continue
+            
+        # Look for money amounts with various formats
+        # Format 1: Numbers with commas and optional decimals (₦1,000.00 or 1,000.00)
+        money_patterns = [
+            r'₦?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)',  # ₦1,000.00 or 1,000.00
+            r'₦?\s*([0-9]+(?:\.[0-9]{2})?)',  # ₦1000.00 or 1000.00
+            r'([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)\s*₦?',  # 1,000.00₦ or 1,000.00
+            r'([0-9]+(?:\.[0-9]{2})?)\s*₦?',  # 1000.00₦ or 1000.00
+        ]
         
-        # Look for standalone numbers that could be amounts
-        if re.match(r'^\s*[0-9,]+\s*$', clean_line):
+        for pattern in money_patterns:
+            matches = re.findall(pattern, clean_line)
+            for match in matches:
+                try:
+                    # Remove commas and convert to float
+                    amount_str = match.replace(',', '')
+                    amount = float(amount_str)
+                    
+                    # Accept ANY positive amount (from 1 to extremely large numbers)
+                    if amount >= 1 and amount <= 1e25:  # Up to 10^25
+                        print(f"💰 Amount found with pattern '{pattern}': ₦{amount}")
+                        return amount
+                except ValueError:
+                    continue
+    
+    # STRATEGY 2: Look for standalone numbers that could be amounts
+    for i, line in enumerate(lines):
+        clean_line = line.strip()
+        
+        # Check for standalone numbers (entire line is just a number)
+        standalone_match = re.match(r'^\s*₦?\s*([0-9,]+(?:\.?[0-9]{0,2})?)\s*₦?\s*$', clean_line)
+        if standalone_match:
             try:
-                amount = float(clean_line.replace(',', ''))
-                # Check if it's a reasonable amount (not a phone number, date, etc.)
-                if 50 <= amount <= 1000000 and amount != 2025:
-                    print(f"💰 Standalone number as amount: ₦{amount}")
+                amount_str = standalone_match.group(1).replace(',', '')
+                amount = float(amount_str)
+                if amount >= 1 and amount <= 1e25:
+                    print(f"💰 Standalone amount: ₦{amount}")
                     return amount
             except ValueError:
                 pass
     
-    # STRATEGY 2: Look near "Successful Transaction" text
-    for i, line in enumerate(lines):
-        if 'SUCCESSFUL' in line.upper() or 'TRANSACTION' in line.upper():
-            # Check 2 lines before this line (where amount usually is)
-            for j in range(max(0, i-2), i):
-                check_line = lines[j].strip()
-                # Look for numbers with decimals
-                decimal_matches = re.findall(r'[0-9,]+\.?[0-9]{0,2}', check_line)
-                for match in decimal_matches:
-                    try:
-                        amount = float(match.replace(',', ''))
-                        if 50 <= amount <= 1000000 and amount != 2025:
-                            print(f"💰 Amount near 'Successful': ₦{amount}")
-                            return amount
-                    except ValueError:
-                        continue
-    
     # STRATEGY 3: Find all valid amounts and pick the most reasonable one
-    all_numbers = re.findall(r'\b[0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]{0,2})?\b', extracted_text)
+    # More comprehensive number matching
+    all_numbers = re.findall(r'\b[0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{0,2})?\b|\b[0-9]+(?:\.[0-9]{0,2})?\b', extracted_text)
     valid_amounts = []
     
     for num_str in all_numbers:
         try:
             amount = float(num_str.replace(',', ''))
-            # Filter out dates, phone numbers, and unreasonable amounts
-            if 50 <= amount <= 1000000 and amount != 2025 and amount != 2024 and amount != 2026:
-                # Exclude numbers that look like phone numbers or IDs
-                if amount != 8079304530 and amount != 9077430:  # Example phone numbers
-                    valid_amounts.append(amount)
+            # Accept ANY positive amount from 1 to extremely large
+            if amount >= 1 and amount <= 1e25:
+                # Additional filtering to exclude obvious non-amounts
+                # Exclude numbers that are exactly common years
+                if amount not in [2024, 2025, 2026, 2027]:
+                    # Exclude very specific numbers that are clearly not amounts
+                    if not (1000000000 <= amount <= 9999999999 and len(str(int(amount))) == 10):  # Phone numbers
+                        valid_amounts.append(amount)
         except ValueError:
             continue
     
@@ -304,24 +300,43 @@ def extract_amount_from_text(extracted_text, expected_amount):
             print(f"💰 Closest amount to expected: ₦{closest_amount}")
             return closest_amount
         else:
-            # Otherwise take the largest reasonable number
+            # Otherwise take the largest reasonable number (most likely to be the transaction amount)
             largest_amount = max(valid_amounts)
-            print(f"💰 Largest reasonable amount: ₦{largest_amount}")
+            print(f"💰 Largest amount found: ₦{largest_amount}")
             return largest_amount
     
-    # STRATEGY 4: Manual pattern matching for common receipt formats
-    # Look for pattern like: "##.##" at the beginning of lines
+    # STRATEGY 4: Look for amounts near keywords
+    keywords = ['AMOUNT', 'TOTAL', 'SENT', 'TRANSACTION', 'PAYMENT', 'TRANSFER', 'SUCCESSFUL']
     for i, line in enumerate(lines):
-        if i < 5:  # Only check first 5 lines (where amount usually is)
-            amount_match = re.search(r'^\s*([0-9,]+\.?[0-9]{0,2})\s*$', line.strip())
-            if amount_match:
-                try:
-                    amount = float(amount_match.group(1).replace(',', ''))
-                    if 50 <= amount <= 1000000:
-                        print(f"💰 Amount in header line: ₦{amount}")
-                        return amount
-                except ValueError:
-                    pass
+        line_upper = line.upper()
+        if any(keyword in line_upper for keyword in keywords):
+            # Check this line and surrounding lines for amounts
+            for j in range(max(0, i-1), min(len(lines), i+2)):
+                check_line = lines[j].strip()
+                # Look for numbers in this line
+                number_matches = re.findall(r'[0-9,]+\.?[0-9]{0,2}', check_line)
+                for match in number_matches:
+                    try:
+                        amount = float(match.replace(',', ''))
+                        if amount >= 1 and amount <= 1e25:
+                            print(f"💰 Amount near keyword: ₦{amount}")
+                            return amount
+                    except ValueError:
+                        continue
+    
+    # STRATEGY 5: PalmPay specific format (centered amounts with symbols)
+    for i, line in enumerate(lines):
+        clean_line = line.strip()
+        # PalmPay often centers amounts with # symbols or spaces
+        palmPay_match = re.search(r'[#\s]*([0-9,]+\.?[0-9]{0,2})[#\s]*', clean_line)
+        if palmPay_match:
+            try:
+                amount = float(palmPay_match.group(1).replace(',', ''))
+                if amount >= 1 and amount <= 1e25:
+                    print(f"💰 PalmPay formatted amount: ₦{amount}")
+                    return amount
+            except ValueError:
+                pass
     
     print("❌ No valid amount found in receipt")
     return None
@@ -690,7 +705,7 @@ def send_private_access(update, context, user_name, ref):
             f"✅ Status: Verified\n\n"
             f"🔒 **You now have access to the private VIP group!**\n\n"
             f"To join:\n"
-            f"1. Search for the group: **TMZ BRAND VIP**\n"
+            f"1. Search for the group: **@TMZBRAND_VIP_OFFICIAL**\n"
             f"2. Request to join\n"
             f"3. Your request will be **automatically approved**!\n\n"
             f"🎯 Welcome to the inner circle! 🏆"
@@ -923,8 +938,66 @@ def decline_request(update, context):
     except ValueError:
         update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
 
+def extract_receipt_details(extracted_text, expected_ref, expected_receiver):
+    """Extract and verify all important details from receipt"""
+    if not extracted_text:
+        return None
+    
+    details = {
+        'amount': None,
+        'timestamp': None,
+        'receiver_found': False,
+        'reference_found': False,
+        'status_successful': False
+    }
+    
+    text_upper = extracted_text.upper()
+    lines = extracted_text.split('\n')
+    
+    # 1. Extract and verify amount (using existing function)
+    details['amount'] = extract_amount_from_text(extracted_text, None)
+    
+    # 2. Check for successful transaction status
+    if any(status in text_upper for status in ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'COMPLETE']):
+        details['status_successful'] = True
+    
+    # 3. Check for reference number in receipt
+    if expected_ref and expected_ref.upper() in text_upper:
+        details['reference_found'] = True
+    
+    # 4. Check for receiver name (partial matching for flexibility)
+    if expected_receiver:
+        # Try exact match first
+        if expected_receiver.upper() in text_upper:
+            details['receiver_found'] = True
+        else:
+            # Try partial matching (first 4 characters of each word)
+            expected_words = expected_receiver.upper().split()
+            receiver_found = False
+            for word in expected_words:
+                if len(word) >= 4 and word[:4] in text_upper:
+                    receiver_found = True
+                    break
+            details['receiver_found'] = receiver_found
+    
+    # 5. Extract timestamp
+    timestamp_patterns = [
+        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
+        r'(\d{1,2}:\d{2})',        # HH:MM
+        r'(\d{1,2}/\d{1,2}/\d{4})', # MM/DD/YYYY
+        r'(\d{1,2}-\d{1,2}-\d{4})', # MM-DD-YYYY
+    ]
+    
+    for pattern in timestamp_patterns:
+        timestamp_match = re.search(pattern, extracted_text)
+        if timestamp_match:
+            details['timestamp'] = timestamp_match.group(1)
+            break
+    
+    return details
+
 def handle_receipt(update, context):
-    """Handle receipt image upload and verification"""
+    """Handle receipt image upload and verification - COMPREHENSIVE CHECKING"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     
@@ -975,31 +1048,55 @@ def handle_receipt(update, context):
             )
             return
         
-        # Extract amount from text
-        detected_amount = extract_amount_from_text(extracted_text, expected_amount)
+        # Extract and verify all receipt details
+        receipt_details = extract_receipt_details(extracted_text, ref, RECEIVER_NAME)
         
-        if not detected_amount:
+        if not receipt_details:
             update.message.reply_text(
-                "❌ Could not find payment amount in receipt. Please ensure:\n\n"
-                "• Amount is clearly visible\n"
-                "• Receipt shows successful transaction\n"
-                "• All text is readable\n\n"
-                "Try again or contact support if problem persists."
+                "❌ Could not process receipt details. Please try again with a clearer screenshot."
             )
             return
         
-        # Verify amount matches expected amount
-        if abs(detected_amount - expected_amount) > 1:  # Allow small rounding differences
-            update.message.reply_text(
-                f"❌ Amount mismatch!\n\n"
-                f"Expected: ₦{expected_amount:,}\n"
-                f"Found in receipt: ₦{detected_amount:,}\n\n"
-                f"Please ensure you sent exactly ₦{expected_amount:,}\n"
-                f"Reference: {ref}"
-            )
-            return
+        # COMPREHENSIVE VERIFICATION CHECKS
+        verification_errors = []
         
-        # Payment verified successfully!
+        # 1. Check amount
+        if not receipt_details['amount']:
+            verification_errors.append("• ❌ Could not find payment amount")
+        else:
+            amount_tolerance = 0.01
+            if abs(receipt_details['amount'] - expected_amount) > amount_tolerance:
+                verification_errors.append(f"• ❌ Wrong amount: ₦{receipt_details['amount']:,} (Expected: ₦{expected_amount:,})")
+        
+        # 2. Check transaction status
+        if not receipt_details['status_successful']:
+            verification_errors.append("• ❌ Transaction not marked as 'Successful'")
+        
+        # 3. Check reference number
+        if not receipt_details['reference_found']:
+            verification_errors.append(f"• ❌ Reference '{ref}' not found in receipt")
+        
+        # 4. Check receiver name
+        if not receipt_details['receiver_found']:
+            verification_errors.append(f"• ❌ Receiver '{RECEIVER_NAME}' not found")
+        
+        # 5. Check timestamp (optional but good to have)
+        if not receipt_details['timestamp']:
+            verification_errors.append("• ⚠️ Could not verify transaction time")
+        
+        # If there are any verification errors, show them all
+        if verification_errors:
+            error_message = "❌ RECEIPT VERIFICATION FAILED!\n\n"
+            error_message += "Issues found:\n" + "\n".join(verification_errors)
+            error_message += f"\n\n🔑 Your Reference: {ref}"
+            error_message += f"\n💰 Expected Amount: ₦{expected_amount:,}"
+            error_message += f"\n👤 Expected Receiver: {RECEIVER_NAME}"
+            error_message += "\n\nPlease ensure your receipt shows all the required details and try again."
+            
+            update.message.reply_text(error_message)
+            return
+
+        # ALL CHECKS PASSED - Payment verified successfully!
         # Move from pending to verified
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         
@@ -1013,30 +1110,47 @@ def handle_receipt(update, context):
         
         print(f"✅ Payment verified: User {user_id}, Amount ₦{expected_amount}, Ref {ref}")
         
-        # Send success message
-        update.message.reply_text(
-            f"✅ PAYMENT VERIFIED SUCCESSFULLY!\n\n"
-            f"💰 Amount: ₦{expected_amount:,}\n"
-            f"🔑 Reference: {ref}\n"
-            f"👤 User: {user_name}\n"
-            f"⏰ Verified at: {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"🎉 Welcome to TMZ BRAND VIP! 🚀"
-        )
+        # Send detailed success message
+        success_message = f"""
+✅ PAYMENT VERIFIED SUCCESSFULLY!
+
+💰 Amount: ₦{expected_amount:,}
+🔑 Reference: {ref}
+👤 User: {user_name}
+⏰ Time: {datetime.now().strftime('%H:%M:%S')}
+
+📋 Verification Results:
+• ✅ Correct amount: ₦{receipt_details['amount']:,}
+• ✅ Transaction status: Successful
+• ✅ Reference verified: {ref}
+• ✅ Receiver verified: {RECEIVER_NAME}
+• ✅ Timestamp: {receipt_details['timestamp'] or 'Verified'}
+
+🎉 Welcome to TMZ BRAND VIP! 🚀
+        """
+        
+        update.message.reply_text(success_message)
         
         # Send private access instructions (NO LINK SHARED)
         send_private_access(update, context, user_name, ref)
         
-        # Notify admin
+        # Notify admin with detailed information
         if ADMIN_ID:
             try:
                 context.bot.send_message(
                     ADMIN_ID,
-                    f"💰 PAYMENT VERIFIED\n\n"
+                    f"💰 PAYMENT VERIFIED - DETAILED\n\n"
                     f"👤 User: {user_name}\n"
                     f"🆔 ID: {user_id}\n"
                     f"💰 Amount: ₦{expected_amount:,}\n"
                     f"🔑 Reference: {ref}\n"
-                    f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}"
+                    f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}\n"
+                    f"📊 OCR Results:\n"
+                    f"  - Amount Found: ₦{receipt_details['amount']:,}\n"
+                    f"  - Status: {'Successful' if receipt_details['status_successful'] else 'Unknown'}\n"
+                    f"  - Reference: {'Found' if receipt_details['reference_found'] else 'Missing'}\n"
+                    f"  - Receiver: {'Found' if receipt_details['receiver_found'] else 'Missing'}\n"
+                    f"  - Timestamp: {receipt_details['timestamp'] or 'Not found'}"
                 )
             except:
                 pass
@@ -1044,6 +1158,26 @@ def handle_receipt(update, context):
     except Exception as e:
         print(f"❌ Error processing receipt: {e}")
         update.message.reply_text("❌ Error processing receipt. Please try again or contact support.")
+
+def extract_timestamp_from_text(extracted_text):
+    """Extract timestamp from OCR text"""
+    if not extracted_text:
+        return None
+    
+    # Common timestamp patterns in receipts
+    patterns = [
+        r'(\d{1,2}:\d{2}:\d{2})',  # HH:MM:SS
+        r'(\d{1,2}:\d{2})',        # HH:MM
+        r'(\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2})',  # MM/DD/YYYY HH:MM:SS
+        r'(\d{1,2}-\d{1,2}-\d{4} \d{1,2}:\d{2}:\d{2})',  # MM-DD-YYYY HH:MM:SS
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, extracted_text)
+        if match:
+            return match.group(1)
+    
+    return None
 
 def handle_message(update, context):
     """Handle text messages - ONLY in private chats"""
@@ -1103,16 +1237,28 @@ def main():
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
     # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
-    from telegram.ext import filters
-
-    # Create updater and dispatcher - REMOVE use_context=True
-    updater = Updater(TOKEN)
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
+    
+    # Create updater and dispatcher
+    updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
-    # Add handlers for private chats only
-    private_filter = filters.ChatType.PRIVATE
+    # Define filters for different versions of python-telegram-bot
+    try:
+        # For newer versions (20.0+)
+        from telegram.ext import filters
+        private_filter = filters.ChatType.PRIVATE
+        photo_filter = filters.PHOTO & private_filter
+        text_filter = filters.TEXT & ~filters.COMMAND & private_filter
+        print("✅ Using new filters syntax (v20.0+)")
+    except (ImportError, AttributeError):
+        # For older versions (pre-20.0)
+        private_filter = Filters.private
+        photo_filter = Filters.photo & private_filter
+        text_filter = Filters.text & ~Filters.command & private_filter
+        print("✅ Using legacy filters syntax (pre-v20.0)")
     
+    # Add handlers for private chats only
     dp.add_handler(CommandHandler("start", start, filters=private_filter))
     dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
     dp.add_handler(CommandHandler("check", check, filters=private_filter))
@@ -1129,8 +1275,8 @@ def main():
     dp.add_handler(ChatJoinRequestHandler(handle_join_request))
     
     # Handle receipt images and text messages - private only
-    dp.add_handler(MessageHandler(filters.PHOTO & private_filter, handle_receipt))
-    dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & private_filter, handle_message))
+    dp.add_handler(MessageHandler(photo_filter, handle_receipt))
+    dp.add_handler(MessageHandler(text_filter, handle_message))
     
     # Error handler
     dp.add_error_handler(error_handler)
@@ -1142,6 +1288,53 @@ def main():
     
     # Run until interrupted
     updater.idle()
-    
+
 if __name__ == '__main__':
-    main()
+    # Start the Telegram bot first
+    print("🚀 Starting Telegram Bot...")
+    
+    # Start bot polling without idle()
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
+    
+    # Create updater and dispatcher
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+    
+    # Define filters
+    private_filter = Filters.private
+    photo_filter = Filters.photo & private_filter
+    text_filter = Filters.text & ~Filters.command & private_filter
+    
+    # Add handlers for private chats only
+    dp.add_handler(CommandHandler("start", start, filters=private_filter))
+    dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
+    dp.add_handler(CommandHandler("check", check, filters=private_filter))
+    dp.add_handler(CommandHandler("history", history, filters=private_filter))
+    dp.add_handler(CommandHandler("help", help_cmd, filters=private_filter))
+    dp.add_handler(CommandHandler("stats", stats, filters=private_filter))
+    dp.add_handler(CommandHandler("setprice", setprice, filters=private_filter))
+    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=private_filter))
+    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
+    dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
+    dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
+    
+    # Handle join requests
+    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
+    
+    # Handle receipt images and text messages - private only
+    dp.add_handler(MessageHandler(photo_filter, handle_receipt))
+    dp.add_handler(MessageHandler(text_filter, handle_message))
+    
+    # Error handler
+    dp.add_error_handler(error_handler)
+    
+    # Start polling without using idle()
+    updater.start_polling()
+    print("✅ Bot is now running and polling for updates...")
+    print("🔇 Bot will be silent in group chats")
+    
+    # Start Flask app on Render's port (this will block)
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🚀 Starting Flask server on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+ 
