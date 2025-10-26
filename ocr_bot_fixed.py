@@ -1294,10 +1294,25 @@ if __name__ == '__main__':
     print("🚀 Starting Telegram Bot...")
     
     # Start bot polling without idle()
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
+    from telegram.ext import Application, CommandHandler, MessageHandler, ChatJoinRequestHandler
+    from telegram.ext import filters
     # Create updater and dispatcher
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
+
+    # Replace the old updater code with:
+    application = Application.builder().token(TOKEN).build()
+
+    # Add handlers using the new pattern
+    application.add_handler(CommandHandler("pay", pay, filters=filters.ChatType.PRIVATE))
+    # ... add all other command handlers with the same pattern
+
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_receipt))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_message))
+
+    # Start the bot
+    application.run_polling()
     
     # Define filters
     private_filter = Filters.private
