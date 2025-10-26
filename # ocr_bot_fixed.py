@@ -1096,13 +1096,12 @@ def webhook():
 
 def main():
     """Main function to start the bot"""
-    print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
     # Import telegram components here to avoid circular imports
     from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ChatJoinRequestHandler
     
     # Create updater and dispatcher
-    updater = Updater(TOKEN, use_context=True)
+    updater = Updater(TOKEN)
     dp = updater.dispatcher
     
     # Add handlers
@@ -1136,4 +1135,4 @@ def main():
     updater.idle()
 
 if __name__ == '__main__':
-    main()
+    print("🚀 Starting TMZ BRAND VIP Payment Bot...")
