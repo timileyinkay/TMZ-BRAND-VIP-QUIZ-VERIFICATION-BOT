@@ -1236,85 +1236,14 @@ def main():
     """Main function to start the bot"""
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
-    # Import telegram components here to avoid circular imports
+    # Import telegram components
     from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
     
-    # Create updater and dispatcher
+    # Create updater and dispatcher (OLD SYNTAX)
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
-    # Define filters for different versions of python-telegram-bot
-    try:
-        # For newer versions (20.0+)
-        from telegram.ext import filters
-        private_filter = filters.ChatType.PRIVATE
-        photo_filter = filters.PHOTO & private_filter
-        text_filter = filters.TEXT & ~filters.COMMAND & private_filter
-        print("✅ Using new filters syntax (v20.0+)")
-    except (ImportError, AttributeError):
-        # For older versions (pre-20.0)
-        private_filter = Filters.private
-        photo_filter = Filters.photo & private_filter
-        text_filter = Filters.text & ~Filters.command & private_filter
-        print("✅ Using legacy filters syntax (pre-v20.0)")
-    
-    # Add handlers for private chats only
-    dp.add_handler(CommandHandler("start", start, filters=private_filter))
-    dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
-    dp.add_handler(CommandHandler("check", check, filters=private_filter))
-    dp.add_handler(CommandHandler("history", history, filters=private_filter))
-    dp.add_handler(CommandHandler("help", help_cmd, filters=private_filter))
-    dp.add_handler(CommandHandler("stats", stats, filters=private_filter))
-    dp.add_handler(CommandHandler("setprice", setprice, filters=private_filter))
-    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=private_filter))
-    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
-    dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
-    dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
-    
-    # Handle join requests (this should work in groups)
-    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
-    
-    # Handle receipt images and text messages - private only
-    dp.add_handler(MessageHandler(photo_filter, handle_receipt))
-    dp.add_handler(MessageHandler(text_filter, handle_message))
-    
-    # Error handler
-    dp.add_error_handler(error_handler)
-    
-    # Start polling
-    updater.start_polling()
-    print("✅ Bot is now running and polling for updates...")
-    print("🔇 Bot will be silent in group chats")
-    
-    # Run until interrupted
-    updater.idle()
-
-if __name__ == '__main__':
-    # Start the Telegram bot first
-    print("🚀 Starting Telegram Bot...")
-    
-    # Start bot polling without idle()
-    from telegram.ext import Application, CommandHandler, MessageHandler, ChatJoinRequestHandler
-    from telegram.ext import filters
-    # Create updater and dispatcher
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    # Replace the old updater code with:
-    application = Application.builder().token(TOKEN).build()
-
-    # Add handlers using the new pattern
-    application.add_handler(CommandHandler("pay", pay, filters=filters.ChatType.PRIVATE))
-    # ... add all other command handlers with the same pattern
-
-    application.add_handler(ChatJoinRequestHandler(handle_join_request))
-    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_receipt))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_message))
-
-    # Start the bot
-    application.run_polling()
-    
-    # Define filters
+    # Define filters (OLD SYNTAX)
     private_filter = Filters.private
     photo_filter = Filters.photo & private_filter
     text_filter = Filters.text & ~Filters.command & private_filter
@@ -1342,11 +1271,13 @@ if __name__ == '__main__':
     # Error handler
     dp.add_error_handler(error_handler)
     
-    # Start polling without using idle()
+    # Start polling
     updater.start_polling()
     print("✅ Bot is now running and polling for updates...")
     print("🔇 Bot will be silent in group chats")
     
+    # Keep the bot running
+    updater.idle()
     # Start Flask app on Render's port (this will block)
     port = int(os.environ.get('PORT', 10000))
     print(f"🚀 Starting Flask server on port {port}...")
