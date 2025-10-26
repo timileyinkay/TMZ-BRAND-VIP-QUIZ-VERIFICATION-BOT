@@ -181,7 +181,7 @@ def extract_text_from_image(image_data):
     """Extract text from image using OCR with better configuration for financial receipts"""
     try:
         if not TESSERACT_AVAILABLE:
-            return None
+            print("⚠️ Tesseract not available. Users will need to manually enter reference numbers.")
             
         # Open image from bytes
         image = Image.open(io.BytesIO(image_data))
