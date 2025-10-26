@@ -1095,36 +1095,36 @@ def home():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Handle Telegram webhook updates"""
-    update = telegram.Update.de_json(request.get_json(), bot)
-    dispatcher.process_update(update)
-    return 'OK'
+    """Handle Telegram webhook updates - placeholder for future use"""
+    return 'Webhook endpoint ready - using polling mode'
 
 def main():
     """Main function to start the bot"""
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
     # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler
+    
+    # Handle different versions of python-telegram-bot
+    try:
+        # New version (20.0+)
+        from telegram.ext import filters
+        Filters = filters
+        private_filter = filters.ChatType.PRIVATE
+        photo_filter = filters.PHOTO & private_filter
+        text_filter = filters.TEXT & ~filters.COMMAND & private_filter
+        print("✅ Using new filters system (v20.0+)")
+    except (ImportError, AttributeError):
+        # Old version (pre-20.0)
+        from telegram.ext import Filters
+        private_filter = Filters.private
+        photo_filter = Filters.photo & private_filter
+        text_filter = Filters.text & ~Filters.command & private_filter
+        print("✅ Using legacy filters system (pre-v20.0)")
     
     # Create updater and dispatcher
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-    
-    # Define filters for different versions of python-telegram-bot
-    try:
-        # For newer versions (20.0+)
-        from telegram.ext import filters
-        private_filter = filters.ChatType.PRIVATE
-        photo_filter = filters.PHOTO & private_filter
-        text_filter = filters.TEXT & ~filters.COMMAND & private_filter
-        print("✅ Using new filters syntax (v20.0+)")
-    except (ImportError, AttributeError):
-        # For older versions (pre-20.0)
-        private_filter = Filters.private
-        photo_filter = Filters.photo & private_filter
-        text_filter = Filters.text & ~Filters.command & private_filter
-        print("✅ Using legacy filters syntax (pre-v20.0)")
     
     # Add handlers for private chats only
     dp.add_handler(CommandHandler("start", start, filters=private_filter))
@@ -1149,24 +1149,21 @@ def main():
     # Error handler
     dp.add_error_handler(error_handler)
     
-    # Start polling
-    updater.start_polling()
-    print("✅ Bot is now running and polling for updates...")
-    print("🔇 Bot will be silent in group chats")
-    
-    # Start Flask app for webhook compatibility
+    # Start Flask app for webhook compatibility in a separate thread
     port = int(os.environ.get('PORT', 10000))
     
     def start_flask():
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
-    # Start Flask in a separate thread
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     print(f"🚀 Flask server started on port {port}")
     
-    # Start polling (blocks)
-    application.run_polling()
+    # Start polling (this blocks and keeps the bot running)
+    print("✅ Bot is now running and polling for updates...")
+    print("🔇 Bot will be silent in group chats")
+    updater.start_polling()
+    updater.idle()  # This keeps the bot running
 
 if __name__ == '__main__':
     main()
