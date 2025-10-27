@@ -5,7 +5,7 @@ import random
 import re
 import threading
 from datetime import datetime
-import pytesseract
+import easyocr
 from PIL import Image, ImageEnhance
 import io
 import os
@@ -194,9 +194,10 @@ def extract_text_from_image(image_data):
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.0)  # Increase contrast
         
-        # Use Tesseract with optimized configuration for receipts
-        custom_config = r'--oem 3 --psm 6'
-        extracted_text = pytesseract.image_to_string(image, config=custom_config)
+        # Use easyocr for better accuracy on receipts
+        reader = easyocr.Reader(['en'], gpu=False)
+        result = reader.readtext(np.array(image), detail=0)
+        extracted_text = "\n".join(result)
         
         print("📸 OCR Text Extracted Successfully")
         print(f"🔍 Raw OCR Text:\n{extracted_text}")
