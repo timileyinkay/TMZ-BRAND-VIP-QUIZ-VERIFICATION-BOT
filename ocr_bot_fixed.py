@@ -42,7 +42,10 @@ if not GROUP_ID:
     exit(1)
 
 # Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
+# Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
 import platform
+
+TESSERACT_AVAILABLE = False
 
 if platform.system() == "Windows":
     tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -51,20 +54,33 @@ if platform.system() == "Windows":
         TESSERACT_AVAILABLE = True
         print(f"✅ Tesseract configured: {tesseract_path}")
     else:
-        TESSERACT_AVAILABLE = False
         print(f"❌ Tesseract not found at: {tesseract_path}")
 else:
-    # Linux (Render) - Tesseract is installed in system PATH
+    # Linux (Render) - Try to use system Tesseract
     try:
-        # Check if tesseract is available in system PATH
-        import subprocess
-        subprocess.run(['tesseract', '--version'], capture_output=True, check=True)
-        pytesseract.pytesseract.tesseract_cmd = 'tesseract'
-        TESSERACT_AVAILABLE = True
-        print("✅ Tesseract configured for Linux (Render)")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        TESSERACT_AVAILABLE = False
-        print("❌ Tesseract not found on Linux system")
+        # Try to find tesseract in common paths
+        possible_paths = [
+            '/usr/bin/tesseract',
+            '/usr/local/bin/tesseract', 
+            'tesseract'
+        ]
+        
+        for tesseract_path in possible_paths:
+            try:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                # Test if it works
+                pytesseract.get_tesseract_version()
+                TESSERACT_AVAILABLE = True
+                print(f"✅ Tesseract configured: {tesseract_path}")
+                break
+            except:
+                continue
+                
+        if not TESSERACT_AVAILABLE:
+            print("❌ Tesseract not available on this system")
+            
+    except Exception as e:
+        print(f"❌ Tesseract configuration error: {e}")
 
 # Database setup
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'opay_payments.db')
