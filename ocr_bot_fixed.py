@@ -1340,70 +1340,106 @@ def main():
     # Handle different versions of python-telegram-bot
     try:
         # New version (20.0+)
-        from telegram.ext import filters
-        Filters = filters
-        private_filter = filters.ChatType.PRIVATE
-        photo_filter = filters.PHOTO & private_filter
-        text_filter = filters.TEXT & ~filters.COMMAND & private_filter
-        print("✅ Using new filters system (v20.0+)")
+        from telegram.ext import Application, filters
+        from telegram import Bot
         
-        # Create updater for new version (no use_context parameter)
-        updater = Updater(TOKEN)
+        print("✅ Using new Application system (v20.0+)")
         
-    except (ImportError, AttributeError):
-        # Old version (pre-20.0)
-        from telegram.ext import Filters
-        private_filter = Filters.private
-        photo_filter = Filters.photo & private_filter
-        text_filter = Filters.text & ~Filters.command & private_filter
-        print("✅ Using legacy filters system (pre-v20.0)")
+        # Create application for new version
+        application = Application.builder().token(TOKEN).build()
+        
+        # Add handlers for private chats only
+        application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("pay", pay, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("check", check, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("history", history, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("help", help_cmd, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("stats", stats, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("setprice", setprice, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("pricesettings", pricesettings, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("pendingrequests", pending_requests, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("approve", approve_request, filters=filters.ChatType.PRIVATE))
+        application.add_handler(CommandHandler("decline", decline_request, filters=filters.ChatType.PRIVATE))
+        
+        # Add callback query handler for buttons
+        application.add_handler(CallbackQueryHandler(handle_button_click))
+        
+        # Handle join requests (this should work in groups)
+        application.add_handler(ChatJoinRequestHandler(handle_join_request))
+        
+        # Handle receipt images and text messages - private only
+        application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_receipt))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_message))
+        
+        # Error handler
+        application.add_error_handler(error_handler)
+        
+        # Start Flask app for webhook compatibility in a separate thread
+        port = int(os.environ.get('PORT', 10000))
+        
+        def start_flask():
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
+        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread.start()
+        print(f"🚀 Flask server started on port {port}")
+        
+        # Start polling (this blocks and keeps the bot running)
+        print("✅ Bot is now running and polling for updates...")
+        print("🔇 Bot will be silent in group chats")
+        application.run_polling()
+        
+    except ImportError:
+        # Fallback to old version (pre-20.0)
+        from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler, Filters
+        
+        print("✅ Using legacy system (pre-v20.0)")
         
         # Create updater for old version
         updater = Updater(TOKEN, use_context=True)
-    
-    dp = updater.dispatcher
-    
-    # Add handlers for private chats only
-    dp.add_handler(CommandHandler("start", start, filters=private_filter))
-    dp.add_handler(CommandHandler("pay", pay, filters=private_filter))
-    dp.add_handler(CommandHandler("check", check, filters=private_filter))
-    dp.add_handler(CommandHandler("history", history, filters=private_filter))
-    dp.add_handler(CommandHandler("help", help_cmd, filters=private_filter))
-    dp.add_handler(CommandHandler("stats", stats, filters=private_filter))
-    dp.add_handler(CommandHandler("setprice", setprice, filters=private_filter))
-    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=private_filter))
-    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=private_filter))
-    dp.add_handler(CommandHandler("approve", approve_request, filters=private_filter))
-    dp.add_handler(CommandHandler("decline", decline_request, filters=private_filter))
-    
-    # Add callback query handler for buttons
-    dp.add_handler(CallbackQueryHandler(handle_button_click))
-    
-    # Handle join requests (this should work in groups)
-    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
-    
-    # Handle receipt images and text messages - private only
-    dp.add_handler(MessageHandler(photo_filter, handle_receipt))
-    dp.add_handler(MessageHandler(text_filter, handle_message))
-    
-    # Error handler
-    dp.add_error_handler(error_handler)
-    
-    # Start Flask app for webhook compatibility in a separate thread
-    port = int(os.environ.get('PORT', 10000))
-    
-    def start_flask():
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    
-    flask_thread = threading.Thread(target=start_flask, daemon=True)
-    flask_thread.start()
-    print(f"🚀 Flask server started on port {port}")
-    
-    # Start polling (this blocks and keeps the bot running)
-    print("✅ Bot is now running and polling for updates...")
-    print("🔇 Bot will be silent in group chats")
-    updater.start_polling()
-    updater.idle()  # This keeps the bot running
+        dp = updater.dispatcher
+        
+        # Add handlers for private chats only
+        dp.add_handler(CommandHandler("start", start, filters=Filters.private))
+        dp.add_handler(CommandHandler("pay", pay, filters=Filters.private))
+        dp.add_handler(CommandHandler("check", check, filters=Filters.private))
+        dp.add_handler(CommandHandler("history", history, filters=Filters.private))
+        dp.add_handler(CommandHandler("help", help_cmd, filters=Filters.private))
+        dp.add_handler(CommandHandler("stats", stats, filters=Filters.private))
+        dp.add_handler(CommandHandler("setprice", setprice, filters=Filters.private))
+        dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=Filters.private))
+        dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=Filters.private))
+        dp.add_handler(CommandHandler("approve", approve_request, filters=Filters.private))
+        dp.add_handler(CommandHandler("decline", decline_request, filters=Filters.private))
+        
+        # Add callback query handler for buttons
+        dp.add_handler(CallbackQueryHandler(handle_button_click))
+        
+        # Handle join requests (this should work in groups)
+        dp.add_handler(ChatJoinRequestHandler(handle_join_request))
+        
+        # Handle receipt images and text messages - private only
+        dp.add_handler(MessageHandler(Filters.photo & Filters.private, handle_receipt))
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.private, handle_message))
+        
+        # Error handler
+        dp.add_error_handler(error_handler)
+        
+        # Start Flask app for webhook compatibility in a separate thread
+        port = int(os.environ.get('PORT', 10000))
+        
+        def start_flask():
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
+        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread.start()
+        print(f"🚀 Flask server started on port {port}")
+        
+        # Start polling (this blocks and keeps the bot running)
+        print("✅ Bot is now running and polling for updates...")
+        print("🔇 Bot will be silent in group chats")
+        updater.start_polling()
+        updater.idle()  # This keeps the bot running
 
 if __name__ == '__main__':
     main()
