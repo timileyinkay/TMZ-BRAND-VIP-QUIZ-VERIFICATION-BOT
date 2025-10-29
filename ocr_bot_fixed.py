@@ -41,16 +41,30 @@ if not GROUP_ID:
     print("💡 Get your group ID by adding @RawDataBot to your group and checking the 'chat_id' field")
     exit(1)
 
-# Tesseract OCR Configuration - FIXED PATH
-tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-if os.path.exists(tesseract_path):
-    pytesseract.pytesseract.tesseract_cmd = tesseract_path
-    TESSERACT_AVAILABLE = True
-    print(f"✅ Tesseract configured: {tesseract_path}")
+# Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
+import platform
+
+if platform.system() == "Windows":
+    tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        TESSERACT_AVAILABLE = True
+        print(f"✅ Tesseract configured: {tesseract_path}")
+    else:
+        TESSERACT_AVAILABLE = False
+        print(f"❌ Tesseract not found at: {tesseract_path}")
 else:
-    TESSERACT_AVAILABLE = False
-    print(f"❌ Tesseract not found at: {tesseract_path}")
-    print("❌ OCR will not work. Please install Tesseract-OCR at the specified path.")
+    # Linux (Render) - Tesseract is installed in system PATH
+    try:
+        # Check if tesseract is available in system PATH
+        import subprocess
+        subprocess.run(['tesseract', '--version'], capture_output=True, check=True)
+        pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+        TESSERACT_AVAILABLE = True
+        print("✅ Tesseract configured for Linux (Render)")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        TESSERACT_AVAILABLE = False
+        print("❌ Tesseract not found on Linux system")
 
 # Database setup
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'opay_payments.db')
