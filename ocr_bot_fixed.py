@@ -19,7 +19,6 @@ load_dotenv()
 print("🤖 Starting TMZ BRAND VIP Payment Bot with OCR...")
 
 # Configuration from .env file
-# Configuration from .env file with proper error handling
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPAY_ACCOUNT = os.getenv('OPAY_ACCOUNT_NUMBER')
 RECEIVER_NAME = os.getenv('RECEIVER_NAME')
@@ -43,7 +42,7 @@ BASE_AMOUNT = int(os.getenv('BASE_AMOUNT', 2000))
 # Optional TMZ brand fee to display (does NOT change required payment amount)
 TMZ_BRAND_FEE_NAIRA = int(os.getenv('TMZ_BRAND_FEE_NAIRA', 0))
 # Group ID for the private VIP group (REQUIRED - get this from @RawDataBot)
-GROUP_ID = os.getenv('GROUP_ID')  # Add this to your .env file
+GROUP_ID = os.getenv('GROUP_ID')
 
 # Safety check: ensure your bot token exists
 if not TOKEN:
@@ -57,8 +56,7 @@ if not GROUP_ID:
     print("💡 Then set GROUP_ID in Railway dashboard")
     exit(1)
 
-# Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
-
+# Tesseract OCR Configuration
 import platform
 
 TESSERACT_AVAILABLE = False
@@ -74,7 +72,6 @@ if platform.system() == "Windows":
 else:
     # Linux (Render) - Try to use system Tesseract
     try:
-        # Try to find tesseract in common paths
         possible_paths = [
             '/usr/bin/tesseract',
             '/usr/local/bin/tesseract', 
@@ -84,7 +81,6 @@ else:
         for tesseract_path in possible_paths:
             try:
                 pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                # Test if it works
                 pytesseract.get_tesseract_version()
                 TESSERACT_AVAILABLE = True
                 print(f"✅ Tesseract configured: {tesseract_path}")
@@ -98,7 +94,6 @@ else:
     except Exception as e:
         print(f"❌ Tesseract configuration error: {e}")
 
-# After the Tesseract configuration section, add:
 if not TESSERACT_AVAILABLE:
     print("⚠️  Tesseract OCR is not available on this system")
     print("💡 Receipt verification will not work automatically")
@@ -111,22 +106,18 @@ DATABASE_NAME = os.getenv('DATABASE_NAME', 'opay_payments.db')
 conn = sqlite3.connect(DATABASE_NAME, check_same_thread=False)
 c = conn.cursor()
 
-# Enhanced database setup with schema updates
 def setup_database():
     """Setup database with all required tables and columns"""
-    # Check if pending_payments has the new columns
     c.execute("PRAGMA table_info(pending_payments)")
     columns = [column[1] for column in c.fetchall()]
     
     if 'sender_name' not in columns:
         print("🔄 Updating database schema...")
-        # Create new table with all columns
         c.execute('''CREATE TABLE IF NOT EXISTS pending_payments_new
                      (ref TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER, 
                       created_at REAL, expiry_at REAL, sender_name TEXT, 
                       account_name TEXT, payment_platform TEXT)''')
         
-        # Copy existing data
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_payments'")
         if c.fetchone():
             c.execute("INSERT INTO pending_payments_new (ref, user_id, amount, created_at, expiry_at, sender_name, account_name, payment_platform) SELECT ref, user_id, amount, created_at, expiry_at, 'Unknown', 'Unknown', 'Unknown' FROM pending_payments")
@@ -135,19 +126,16 @@ def setup_database():
         c.execute("ALTER TABLE pending_payments_new RENAME TO pending_payments")
         print("✅ Updated pending_payments table")
     
-    # Check if verified_payments has the new columns
     c.execute("PRAGMA table_info(verified_payments)")
     columns = [column[1] for column in c.fetchall()]
     
     if 'sender_name' not in columns:
         print("🔄 Updating verified_payments schema...")
-        # Create new table with all columns
         c.execute('''CREATE TABLE IF NOT EXISTS verified_payments_new
                      (ref TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER, 
                       verified_at REAL, user_name TEXT, sender_name TEXT,
                       account_name TEXT, payment_platform TEXT)''')
         
-        # Copy existing data
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_payments'")
         if c.fetchone():
             c.execute("INSERT INTO verified_payments_new (ref, user_id, amount, verified_at, user_name, sender_name, account_name, payment_platform) SELECT ref, user_id, amount, verified_at, user_name, 'Unknown', 'Unknown', 'Unknown' FROM verified_payments")
@@ -156,13 +144,11 @@ def setup_database():
         c.execute("ALTER TABLE verified_payments_new RENAME TO verified_payments")
         print("✅ Updated verified_payments table")
     
-    # Create join_requests table to track join requests
     c.execute('''CREATE TABLE IF NOT EXISTS join_requests
                  (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
                   request_time REAL, status TEXT, processed_by TEXT, 
                   processed_time REAL)''')
     
-    # Create other tables if they don't exist
     c.execute('''CREATE TABLE IF NOT EXISTS admin_settings
                  (id INTEGER PRIMARY KEY, base_amount INTEGER, 
                   updated_at REAL, updated_by INTEGER)''')
@@ -227,17 +213,10 @@ def extract_text_from_image(image_data):
             print("❌ OCR not available - Tesseract not found")
             return None
             
-        # Open image from bytes
         image = Image.open(io.BytesIO(image_data))
-        
-        # Enhanced image preprocessing for better OCR
-        image = image.convert('L')  # Convert to grayscale
-        
-        # Increase contrast
+        image = image.convert('L')
         enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.0)  # Increase contrast
-        
-        # Use Tesseract with optimized configuration for receipts
+        image = enhancer.enhance(2.0)
         custom_config = r'--oem 3 --psm 6'
         extracted_text = pytesseract.image_to_string(image, config=custom_config)
         
@@ -263,18 +242,10 @@ def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
         'success_status': False
     }
     
-    details_found = {
-        'detected_amount': None,
-        'receiver_match': False,
-        'reference_match': False,
-        'success_found': False
-    }
-    
     # CONDITION 1: Verify exact amount
     detected_amount = extract_amount_from_text(extracted_text, expected_amount)
     if detected_amount and detected_amount == expected_amount:
         conditions_met['amount'] = True
-        details_found['detected_amount'] = detected_amount
     else:
         actual_amount = detected_amount if detected_amount else "Not found"
         return False, f"❌ WRONG AMOUNT!\n\nExpected: ₦{expected_amount:,}\nFound: ₦{actual_amount:,}\n\nOnly exactly ₦{expected_amount:,} is accepted!"
@@ -291,7 +262,6 @@ def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
         for receiver_var in receiver_variations:
             if receiver_var in line_upper and len(receiver_var) > 3:
                 conditions_met['receiver'] = True
-                details_found['receiver_match'] = True
                 break
         if conditions_met['receiver']:
             break
@@ -303,7 +273,6 @@ def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
     for line in lines:
         if ref.upper() in line.upper():
             conditions_met['reference'] = True
-            details_found['reference_match'] = True
             break
     
     if not conditions_met['reference']:
@@ -320,7 +289,6 @@ def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
         for indicator in success_indicators:
             if indicator in line_upper:
                 conditions_met['success_status'] = True
-                details_found['success_found'] = True
                 break
         if conditions_met['success_status']:
             break
@@ -328,7 +296,6 @@ def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
     if not conditions_met['success_status']:
         return False, "❌ TRANSACTION STATUS NOT VERIFIED!\n\nPlease ensure receipt shows 'Successful' or 'Completed' transaction status."
     
-    # ALL CONDITIONS MET
     if all(conditions_met.values()):
         return True, "✅ All verification conditions met!"
     else:
@@ -342,19 +309,15 @@ def extract_amount_from_text(extracted_text, expected_amount):
     
     print(f"🔍 Searching for amount in receipt. Expected: ₦{expected_amount}")
     
-    # Debug: Show all numbers found
     all_numbers_debug = re.findall(r'\b[0-9,.]+\b', extracted_text)
     print(f"🔢 All numbers found: {all_numbers_debug}")
     
-    # Convert to uppercase for easier matching
     text_upper = extracted_text.upper()
     lines = extracted_text.split('\n')
     
-    # SPECIAL CASE: Look for PalmPay amount format (centered amount with symbols)
+    # SPECIAL CASE: Look for PalmPay amount format
     for i, line in enumerate(lines):
         clean_line = line.strip()
-        
-        # PalmPay specific pattern: number with .00 surrounded by symbols or spaces
         palmPay_match = re.search(r'[#\s]*([0-9,]+\.?[0-9]{2})[#\s]*', clean_line)
         if palmPay_match:
             try:
@@ -365,31 +328,26 @@ def extract_amount_from_text(extracted_text, expected_amount):
             except ValueError:
                 pass
     
-    # STRATEGY 1: Look for the main transaction amount (usually at top with 2 decimal places)
+    # STRATEGY 1: Look for main transaction amount
     for i, line in enumerate(lines):
         clean_line = line.strip()
         
-        # Skip obvious date lines
         if any(date_word in clean_line.upper() for date_word in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', '2025', '2024', '2026']):
             continue
             
-        # Look for lines that contain numbers with 2 decimal places (money format)
         decimal_matches = re.findall(r'[0-9,]+\.?[0-9]{2}', clean_line)
         for match in decimal_matches:
             try:
                 amount = float(match.replace(',', ''))
-                # Valid amount range and not a date
                 if 50 <= amount <= 1000000 and amount != 2025.0 and amount != 2024.0 and amount != 2026.0:
                     print(f"💰 Decimal amount found: ₦{amount}")
                     return amount
             except ValueError:
                 continue
         
-        # Look for standalone numbers that could be amounts
         if re.match(r'^\s*[0-9,]+\s*$', clean_line):
             try:
                 amount = float(clean_line.replace(',', ''))
-                # Check if it's a reasonable amount (not a phone number, date, etc.)
                 if 50 <= amount <= 1000000 and amount != 2025:
                     print(f"💰 Standalone number as amount: ₦{amount}")
                     return amount
@@ -399,10 +357,8 @@ def extract_amount_from_text(extracted_text, expected_amount):
     # STRATEGY 2: Look near "Successful Transaction" text
     for i, line in enumerate(lines):
         if 'SUCCESSFUL' in line.upper() or 'TRANSACTION' in line.upper():
-            # Check 2 lines before this line (where amount usually is)
             for j in range(max(0, i-2), i):
                 check_line = lines[j].strip()
-                # Look for numbers with decimals
                 decimal_matches = re.findall(r'[0-9,]+\.?[0-9]{0,2}', check_line)
                 for match in decimal_matches:
                     try:
@@ -420,30 +376,25 @@ def extract_amount_from_text(extracted_text, expected_amount):
     for num_str in all_numbers:
         try:
             amount = float(num_str.replace(',', ''))
-            # Filter out dates, phone numbers, and unreasonable amounts
             if 50 <= amount <= 1000000 and amount != 2025 and amount != 2024 and amount != 2026:
-                # Exclude numbers that look like phone numbers or IDs
-                if amount != 8079304530 and amount != 9077430:  # Example phone numbers
+                if amount != 8079304530 and amount != 9077430:
                     valid_amounts.append(amount)
         except ValueError:
             continue
     
     if valid_amounts:
-        # If we have expected amount, find closest match
         if expected_amount:
             closest_amount = min(valid_amounts, key=lambda x: abs(x - expected_amount))
             print(f"💰 Closest amount to expected: ₦{closest_amount}")
             return closest_amount
         else:
-            # Otherwise take the largest reasonable number
             largest_amount = max(valid_amounts)
             print(f"💰 Largest reasonable amount: ₦{largest_amount}")
             return largest_amount
     
-    # STRATEGY 4: Manual pattern matching for common receipt formats
-    # Look for pattern like: "##.##" at the beginning of lines
+    # STRATEGY 4: Manual pattern matching
     for i, line in enumerate(lines):
-        if i < 5:  # Only check first 5 lines (where amount usually is)
+        if i < 5:
             amount_match = re.search(r'^\s*([0-9,]+\.?[0-9]{0,2})\s*$', line.strip())
             if amount_match:
                 try:
@@ -457,7 +408,7 @@ def extract_amount_from_text(extracted_text, expected_amount):
     print("❌ No valid amount found in receipt")
     return None
 
-# ========== MISSING FUNCTIONS ADDED BELOW ==========
+# ========== SYNC HANDLER FUNCTIONS ==========
 
 def start(update, context):
     """Handle /start command with payment button"""
@@ -483,7 +434,6 @@ How to join the PRIVATE VIP Room:
 
 ⚡ Once verified, you'll be automatically approved for the private VIP group! 💰🚀"""
 
-    # Create inline keyboard with payment button
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     
     keyboard = [
@@ -496,21 +446,18 @@ How to join the PRIVATE VIP Room:
     update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 def pay(update, context):
-    """Handle /pay command - SIMPLIFIED VERSION"""
+    """Handle /pay command"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     current_amount = get_current_base_amount()
     
-    # Clean up expired payments first
     cleanup_expired_payments()
     
-    # Check if user has existing pending payment
     c.execute("SELECT ref, amount FROM pending_payments WHERE user_id=?", (user_id,))
     existing = c.fetchone()
     if existing:
         ref_existing, amount_existing = existing
         
-        # Create inline keyboard for existing payment
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         
         keyboard = [
@@ -528,20 +475,15 @@ def pay(update, context):
         )
         return
     
-    # Generate unique reference
     ref = generate_reference()
-
-    # Calculate timestamps
     created_at = time.time()
     expiry_at = created_at + (TIMEOUT_MINUTES * 60)
     
-    # Save to database with default values for new fields
     c.execute("INSERT INTO pending_payments VALUES (?,?,?,?,?,?,?,?)", 
               (ref, user_id, current_amount, created_at, expiry_at, 
                user_name, user_name, 'Opay/PalmPay'))
     conn.commit()
     
-    # Format times for display
     created_time = datetime.fromtimestamp(created_at).strftime("%H:%M:%S")
     expiry_time = datetime.fromtimestamp(expiry_at).strftime("%H:%M:%S")
     
@@ -584,7 +526,6 @@ PAYMENT INSTRUCTIONS:
     if TMZ_BRAND_FEE_NAIRA:
         instructions += f"\nTMZ BRAND FEE: ₦{TMZ_BRAND_FEE_NAIRA:,} (this is a platform fee)\n"
 
-    # Add action buttons
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     
     keyboard = [
@@ -603,54 +544,68 @@ def handle_button_click(update, context):
     user_id = query.from_user.id
     data = query.data
     
-    # Answer the callback query (removes loading state)
     query.answer()
     
     if data == "create_payment":
-        # Simulate /pay command
-        from telegram import Update
-        from telegram.ext import CallbackContext
+        current_amount = get_current_base_amount()
+        ref = generate_reference()
+        created_at = time.time()
+        expiry_at = created_at + (TIMEOUT_MINUTES * 60)
         
-        # Create a mock update for the pay function
-        class MockMessage:
-            def __init__(self, user, chat):
-                self.from_user = user
-                self.chat = chat
-                self.reply_text = query.edit_message_text
-            
-            def reply_text(self, *args, **kwargs):
-                return query.edit_message_text(*args, **kwargs)
+        c.execute("INSERT INTO pending_payments VALUES (?,?,?,?,?,?,?,?)", 
+                  (ref, user_id, current_amount, created_at, expiry_at, 
+                   query.from_user.first_name, query.from_user.first_name, 'Opay/PalmPay'))
+        conn.commit()
         
-        class MockUpdate:
-            def __init__(self, user, chat):
-                self.effective_user = user
-                self.effective_chat = chat
-                self.message = MockMessage(user, chat)
-        
-        mock_update = MockUpdate(query.from_user, query.message.chat)
-        pay(mock_update, context)
+        instructions = f"""
+✅ PAYMENT REQUEST CREATED!
+
+💰 Amount: ₦{current_amount:,}  
+🔑 Reference: {ref}  
+⏰ Time Window: {TIMEOUT_MINUTES} minutes  
+
+PAYMENT INSTRUCTIONS:
+1️⃣ Send exactly ₦{current_amount:,} to: {OPAY_ACCOUNT}
+2️⃣ Receiver: {RECEIVER_NAME}  
+3️⃣ Reference in Remark: {ref}
+4️⃣ Upload receipt screenshot within {TIMEOUT_MINUTES} minutes
+"""
+        query.edit_message_text(instructions)
         
     elif data == "check_payment":
-        # Simulate /check command
-        class MockMessage:
-            def __init__(self, user, chat):
-                self.from_user = user
-                self.chat = chat
-            
-            def reply_text(self, text, **kwargs):
-                return query.edit_message_text(text, **kwargs)
+        c.execute("SELECT ref, amount, created_at, expiry_at FROM pending_payments WHERE user_id=? ORDER BY created_at DESC LIMIT 1", 
+                  (user_id,))
+        row = c.fetchone()
         
-        class MockUpdate:
-            def __init__(self, user, chat):
-                self.effective_user = user
-                self.effective_chat = chat
-                self.message = MockMessage(user, chat)
+        if not row:
+            query.edit_message_text("📭 No pending payments found.")
+            return
         
-        mock_update = MockUpdate(query.from_user, query.message.chat)
-        check(mock_update, context)
+        ref, amount, created_at, expiry_at = row
+        now = time.time()
+        
+        if now > expiry_at:
+            c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
+            conn.commit()
+            query.edit_message_text("⏰ Payment request expired.")
+            return
+        
+        time_left = int(expiry_at - now)
+        minutes_left = time_left // 60
+        seconds_left = time_left % 60
+        
+        status = f"""
+📋 PENDING PAYMENT
+
+💰 Amount: ₦{amount:,}
+🔑 Reference: {ref}
+⏰ Time Left: {minutes_left}m {seconds_left}s
+
+📸 Upload your receipt SCREENSHOT to verify payment.
+"""
+        query.edit_message_text(status)
         
     elif data == "show_help":
-        # Show help message
         current_amount = get_current_base_amount()
         help_text = f"""
 ℹ️ HELP - TMZ BRAND VIP Payment Verification
@@ -663,17 +618,6 @@ Payment Process:
 5. Include reference in Remark/Narration field
 6. Upload receipt SCREENSHOT for verification
 7. Get AUTO-APPROVED for private group
-
-📸 Screenshot Tips:
-• Ensure all text is clear and readable
-• Include amount, receiver, reference
-• Show transaction status "Successful"
-• Capture full receipt
-
-🎯 After Verification:
-• Automatically approved for private group
-• No links shared - complete privacy
-• Direct access to VIP content
 """
         query.edit_message_text(help_text)
         
@@ -691,7 +635,6 @@ def check(update, context):
     """Handle /check command"""
     user_id = update.effective_user.id
     
-    # Clean up expired payments first
     cleanup_expired_payments()
     
     c.execute("SELECT ref, amount, created_at, expiry_at FROM pending_payments WHERE user_id=? ORDER BY created_at DESC LIMIT 1", 
@@ -804,7 +747,6 @@ def stats(update, context):
         update.message.reply_text("❌ Admin only command.")
         return
     
-    # Get statistics
     c.execute("SELECT COUNT(*) FROM pending_payments")
     pending_count = c.fetchone()[0]
     
@@ -819,7 +761,6 @@ def stats(update, context):
     
     current_amount = get_current_base_amount()
     
-    # Get admin settings info
     c.execute("SELECT base_amount, updated_at, updated_by FROM admin_settings WHERE id=1")
     admin_settings = c.fetchone()
     
@@ -901,7 +842,6 @@ def pricesettings(update, context):
     
     current_amount = get_current_base_amount()
     
-    # Get admin settings info
     c.execute("SELECT base_amount, updated_at, updated_by FROM admin_settings WHERE id=1")
     admin_settings = c.fetchone()
     
@@ -930,7 +870,6 @@ def send_private_access(update, context, user_name, ref):
     try:
         user_id = update.effective_user.id
         
-        # Send success message
         update.message.reply_text(
             f"🎉 PAYMENT VERIFIED! 🎉\n\n"
             f"Welcome to TMZ BRAND VIP, {user_name}! 🚀\n\n"
@@ -944,7 +883,6 @@ def send_private_access(update, context, user_name, ref):
             f"🎯 Welcome to the inner circle! 🏆"
         )
         
-        # Mark user as verified in database for auto-approval
         c.execute('''INSERT OR REPLACE INTO join_requests 
                     (user_id, username, first_name, request_time, status, processed_by, processed_time) 
                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
@@ -970,21 +908,17 @@ def handle_join_request(update, context):
         
         print(f"📥 Join request from {first_name} (@{username}) - ID: {user_id}")
         
-        # Check if user has verified payment OR is pre-approved
         c.execute("SELECT COUNT(*) FROM verified_payments WHERE user_id=?", (user_id,))
         has_verified_payment = c.fetchone()[0] > 0
         
-        # Check if user is pre-approved
         c.execute("SELECT status FROM join_requests WHERE user_id=?", (user_id,))
         join_request_data = c.fetchone()
         is_pre_approved = join_request_data and join_request_data[0] == 'pre_approved'
         
         if has_verified_payment or is_pre_approved:
-            # Auto-approve if payment is verified or pre-approved
             try:
                 context.bot.approve_chat_join_request(chat_id, user_id)
                 
-                # Update join_requests table
                 c.execute('''INSERT OR REPLACE INTO join_requests 
                             (user_id, username, first_name, request_time, status, processed_by, processed_time) 
                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
@@ -993,7 +927,6 @@ def handle_join_request(update, context):
                 
                 print(f"✅ Auto-approved join request for {first_name} (verified/pre-approved)")
                 
-                # Notify user
                 try:
                     context.bot.send_message(
                         user_id,
@@ -1008,7 +941,6 @@ def handle_join_request(update, context):
             except Exception as e:
                 print(f"❌ Error approving join request: {e}")
         else:
-            # Save as pending for manual review
             c.execute('''INSERT OR REPLACE INTO join_requests 
                         (user_id, username, first_name, request_time, status) 
                         VALUES (?, ?, ?, ?, ?)''',
@@ -1017,7 +949,6 @@ def handle_join_request(update, context):
             
             print(f"📝 Saved pending join request for {first_name} (no verified payment)")
             
-            # Notify admin
             if ADMIN_ID:
                 try:
                     context.bot.send_message(
@@ -1079,7 +1010,6 @@ def approve_request(update, context):
     try:
         target_user_id = int(context.args[0])
         
-        # Check if request exists
         c.execute("SELECT username, first_name FROM join_requests WHERE user_id=? AND status='pending'", (target_user_id,))
         request = c.fetchone()
         
@@ -1089,19 +1019,16 @@ def approve_request(update, context):
         
         username, first_name = request
         
-        # Approve the join request
         try:
             if GROUP_ID:
                 context.bot.approve_chat_join_request(GROUP_ID, target_user_id)
             
-            # Update database
             c.execute("UPDATE join_requests SET status='approved', processed_by=?, processed_time=? WHERE user_id=?", 
                      (user_id, time.time(), target_user_id))
             conn.commit()
             
             update.message.reply_text(f"✅ Join request for {first_name} (@{username}) approved!")
             
-            # Notify user
             try:
                 context.bot.send_message(
                     target_user_id,
@@ -1133,7 +1060,6 @@ def decline_request(update, context):
     try:
         target_user_id = int(context.args[0])
         
-        # Check if request exists
         c.execute("SELECT username, first_name FROM join_requests WHERE user_id=? AND status='pending'", (target_user_id,))
         request = c.fetchone()
         
@@ -1143,19 +1069,16 @@ def decline_request(update, context):
         
         username, first_name = request
         
-        # Decline the join request
         try:
             if GROUP_ID:
                 context.bot.decline_chat_join_request(GROUP_ID, target_user_id)
             
-            # Update database
             c.execute("UPDATE join_requests SET status='declined', processed_by=?, processed_time=? WHERE user_id=?", 
                      (user_id, time.time(), target_user_id))
             conn.commit()
             
             update.message.reply_text(f"❌ Join request for {first_name} (@{username}) declined.")
             
-            # Notify user
             try:
                 context.bot.send_message(
                     target_user_id,
@@ -1172,11 +1095,10 @@ def decline_request(update, context):
         update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
 
 def handle_receipt(update, context):
-    """Handle receipt image upload and verification - STRICT ALL CONDITIONS CHECKING"""
+    """Handle receipt image upload and verification"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     
-    # Check if user has pending payment
     c.execute("SELECT ref, amount, expiry_at FROM pending_payments WHERE user_id=?", (user_id,))
     row = c.fetchone()
     
@@ -1186,31 +1108,25 @@ def handle_receipt(update, context):
     
     ref, expected_amount, expiry_at = row
     
-    # Check if payment has expired
     if time.time() > expiry_at:
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         conn.commit()
         update.message.reply_text("⏰ Payment request expired. Use /pay to create a new one.")
         return
     
-    # Check if message has photo
     if not update.message.photo:
         update.message.reply_text("❌ Please upload a screenshot of your payment receipt.")
         return
     
-    # Get the highest quality photo
     photo_file = update.message.photo[-1].get_file()
     
-    # Download photo data
     update.message.reply_text("🔍 Verifying receipt... Please wait ⏳")
     
     try:
-        # Download image data
         photo_data = io.BytesIO()
         photo_file.download(out=photo_data)
         photo_data.seek(0)
         
-        # Extract text using OCR
         extracted_text = extract_text_from_image(photo_data.getvalue())
         
         if not extracted_text:
@@ -1223,7 +1139,6 @@ def handle_receipt(update, context):
             )
             return
         
-        # VERIFY ALL CONDITIONS MUST BE MET
         all_conditions_met, verification_message = verify_all_conditions(
             extracted_text, expected_amount, ref, user_name
         )
@@ -1232,11 +1147,8 @@ def handle_receipt(update, context):
             update.message.reply_text(verification_message)
             return
         
-        # ALL CONDITIONS MET - Payment verified successfully!
-        # Move from pending to verified
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         
-        # Get user's real name from profile or use Telegram name
         real_name = get_user_profile(user_id) or user_name
         
         c.execute("INSERT INTO verified_payments VALUES (?,?,?,?,?,?,?,?)", 
@@ -1246,7 +1158,6 @@ def handle_receipt(update, context):
         
         print(f"✅ Payment verified: User {user_id}, Amount ₦{expected_amount}, Ref {ref}")
         
-        # Send success message
         update.message.reply_text(
             f"✅ PAYMENT VERIFIED SUCCESSFULLY!\n\n"
             f"💰 Amount: ₦{expected_amount:,}\n"
@@ -1256,10 +1167,8 @@ def handle_receipt(update, context):
             f"🎉 Welcome to TMZ BRAND VIP! 🚀"
         )
         
-        # Send private access instructions (NO LINK SHARED)
         send_private_access(update, context, user_name, ref)
         
-        # Notify admin
         if ADMIN_ID:
             try:
                 context.bot.send_message(
@@ -1281,18 +1190,15 @@ def handle_receipt(update, context):
 
 def handle_message(update, context):
     """Handle text messages - ONLY in private chats"""
-    # Ignore group messages completely
     if update.effective_chat.type != 'private':
         return
     
     user_id = update.effective_user.id
     text = update.message.text
     
-    # Check if message is a command
     if text.startswith('/'):
         return
     
-    # Check if user has pending payment (might be sending reference or other info)
     c.execute("SELECT ref FROM pending_payments WHERE user_id=?", (user_id,))
     row = c.fetchone()
     
@@ -1327,119 +1233,50 @@ def home():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Handle Telegram webhook updates - placeholder for future use"""
     return 'Webhook endpoint ready - using polling mode'
 
 def main():
     """Main function to start the bot"""
     print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
-    # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler
+    from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler, Filters
     
-    # Handle different versions of python-telegram-bot
-    try:
-        # New version (20.0+)
-        from telegram.ext import Application, filters
-        from telegram import Bot
-        
-        print("✅ Using new Application system (v20.0+)")
-        
-        # Create application for new version
-        application = Application.builder().token(TOKEN).build()
-        
-        # Add handlers for private chats only
-        application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("pay", pay, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("check", check, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("history", history, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("help", help_cmd, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("stats", stats, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("setprice", setprice, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("pricesettings", pricesettings, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("pendingrequests", pending_requests, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("approve", approve_request, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("decline", decline_request, filters=filters.ChatType.PRIVATE))
-        
-        # Add callback query handler for buttons
-        application.add_handler(CallbackQueryHandler(handle_button_click))
-        
-        # Handle join requests (this should work in groups)
-        application.add_handler(ChatJoinRequestHandler(handle_join_request))
-        
-        # Handle receipt images and text messages - private only
-        application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_receipt))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_message))
-        
-        # Error handler
-        application.add_error_handler(error_handler)
-        
-        # Start Flask app for webhook compatibility in a separate thread
-        port = int(os.environ.get('PORT', 10000))
-        
-        def start_flask():
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-        
-        flask_thread = threading.Thread(target=start_flask, daemon=True)
-        flask_thread.start()
-        print(f"🚀 Flask server started on port {port}")
-        
-        # Start polling (this blocks and keeps the bot running)
-        print("✅ Bot is now running and polling for updates...")
-        print("🔇 Bot will be silent in group chats")
-        application.run_polling()
-        
-    except ImportError:
-        # Fallback to old version (pre-20.0)
-        from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler, Filters
-        
-        print("✅ Using legacy system (pre-v20.0)")
-        
-        # Create updater for old version
-        updater = Updater(TOKEN, use_context=True)
-        dp = updater.dispatcher
-        
-        # Add handlers for private chats only
-        dp.add_handler(CommandHandler("start", start, filters=Filters.private))
-        dp.add_handler(CommandHandler("pay", pay, filters=Filters.private))
-        dp.add_handler(CommandHandler("check", check, filters=Filters.private))
-        dp.add_handler(CommandHandler("history", history, filters=Filters.private))
-        dp.add_handler(CommandHandler("help", help_cmd, filters=Filters.private))
-        dp.add_handler(CommandHandler("stats", stats, filters=Filters.private))
-        dp.add_handler(CommandHandler("setprice", setprice, filters=Filters.private))
-        dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=Filters.private))
-        dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=Filters.private))
-        dp.add_handler(CommandHandler("approve", approve_request, filters=Filters.private))
-        dp.add_handler(CommandHandler("decline", decline_request, filters=Filters.private))
-        
-        # Add callback query handler for buttons
-        dp.add_handler(CallbackQueryHandler(handle_button_click))
-        
-        # Handle join requests (this should work in groups)
-        dp.add_handler(ChatJoinRequestHandler(handle_join_request))
-        
-        # Handle receipt images and text messages - private only
-        dp.add_handler(MessageHandler(Filters.photo & Filters.private, handle_receipt))
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.private, handle_message))
-        
-        # Error handler
-        dp.add_error_handler(error_handler)
-        
-        # Start Flask app for webhook compatibility in a separate thread
-        port = int(os.environ.get('PORT', 10000))
-        
-        def start_flask():
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-        
-        flask_thread = threading.Thread(target=start_flask, daemon=True)
-        flask_thread.start()
-        print(f"🚀 Flask server started on port {port}")
-        
-        # Start polling (this blocks and keeps the bot running)
-        print("✅ Bot is now running and polling for updates...")
-        print("🔇 Bot will be silent in group chats")
-        updater.start_polling()
-        updater.idle()  # This keeps the bot running
+    print("✅ Using legacy system (pre-v20.0)")
+    
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+    
+    dp.add_handler(CommandHandler("start", start, filters=Filters.private))
+    dp.add_handler(CommandHandler("pay", pay, filters=Filters.private))
+    dp.add_handler(CommandHandler("check", check, filters=Filters.private))
+    dp.add_handler(CommandHandler("history", history, filters=Filters.private))
+    dp.add_handler(CommandHandler("help", help_cmd, filters=Filters.private))
+    dp.add_handler(CommandHandler("stats", stats, filters=Filters.private))
+    dp.add_handler(CommandHandler("setprice", setprice, filters=Filters.private))
+    dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=Filters.private))
+    dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=Filters.private))
+    dp.add_handler(CommandHandler("approve", approve_request, filters=Filters.private))
+    dp.add_handler(CommandHandler("decline", decline_request, filters=Filters.private))
+    
+    dp.add_handler(CallbackQueryHandler(handle_button_click))
+    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
+    dp.add_handler(MessageHandler(Filters.photo & Filters.private, handle_receipt))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.private, handle_message))
+    dp.add_error_handler(error_handler)
+    
+    port = int(os.environ.get('PORT', 10000))
+    
+    def start_flask():
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
+    print(f"🚀 Flask server started on port {port}")
+    
+    print("✅ Bot is now running and polling for updates...")
+    print("🔇 Bot will be silent in group chats")
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
