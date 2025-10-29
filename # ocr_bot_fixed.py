@@ -3,6 +3,7 @@ import sqlite3
 import time
 import random
 import re
+import threading
 from datetime import datetime
 import pytesseract
 from PIL import Image, ImageEnhance
@@ -1094,45 +1095,75 @@ def webhook():
     dispatcher.process_update(update)
     return 'OK'
 
+# Force import urllib3 to fix python-telegram-bot issues
+import sys
+try:
+    import urllib3
+    print("✅ urllib3 imported successfully")
+except ImportError as e:
+    print(f"❌ urllib3 import failed: {e}")
+    # Try to install it programmatically (as fallback)
+    try:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "urllib3"])
+        import urllib3
+        print("✅ urllib3 installed and imported")
+    except:
+        print("❌ Failed to install urllib3")
 def main():
     """Main function to start the bot"""
+    print("🚀 Starting TMZ BRAND VIP Payment Bot...")
     
-    # Import telegram components here to avoid circular imports
-    from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ChatJoinRequestHandler
-    
-    # Create updater and dispatcher
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
-    
-    # Add handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("pay", pay))
-    dp.add_handler(CommandHandler("check", check))
-    dp.add_handler(CommandHandler("history", history))
-    dp.add_handler(CommandHandler("help", help_cmd))
-    dp.add_handler(CommandHandler("stats", stats))
-    dp.add_handler(CommandHandler("setprice", setprice))
-    dp.add_handler(CommandHandler("pricesettings", pricesettings))
-    dp.add_handler(CommandHandler("pendingrequests", pending_requests))
-    dp.add_handler(CommandHandler("approve", approve_request))
-    dp.add_handler(CommandHandler("decline", decline_request))
-    
-    # Handle join requests
-    dp.add_handler(ChatJoinRequestHandler(handle_join_request))
-    
-    # Handle receipt images and text messages
-    dp.add_handler(MessageHandler(Filters.photo, handle_receipt))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    
-    # Error handler
-    dp.add_error_handler(error_handler)
-    
-    # Start polling
-    updater.start_polling()
-    print("✅ Bot is now running and polling for updates...")
-    
-    # Run until interrupted
-    updater.idle()
+    try:
+        # Import telegram components at the top level to avoid issues
+        from telegram.ext import Updater, CommandHandler, MessageHandler, ChatJoinRequestHandler, Filters
+        
+        # Create updater and dispatcher
+        updater = Updater(TOKEN, use_context=True)
+        dp = updater.dispatcher
+        
+        # Add handlers for private chats only
+        dp.add_handler(CommandHandler("start", start, filters=Filters.private))
+        dp.add_handler(CommandHandler("pay", pay, filters=Filters.private))
+        dp.add_handler(CommandHandler("check", check, filters=Filters.private))
+        dp.add_handler(CommandHandler("history", history, filters=Filters.private))
+        dp.add_handler(CommandHandler("help", help_cmd, filters=Filters.private))
+        dp.add_handler(CommandHandler("stats", stats, filters=Filters.private))
+        dp.add_handler(CommandHandler("setprice", setprice, filters=Filters.private))
+        dp.add_handler(CommandHandler("pricesettings", pricesettings, filters=Filters.private))
+        dp.add_handler(CommandHandler("pendingrequests", pending_requests, filters=Filters.private))
+        dp.add_handler(CommandHandler("approve", approve_request, filters=Filters.private))
+        dp.add_handler(CommandHandler("decline", decline_request, filters=Filters.private))
+        
+        # Handle join requests
+        dp.add_handler(ChatJoinRequestHandler(handle_join_request))
+        
+        # Handle receipt images and text messages - private only
+        dp.add_handler(MessageHandler(Filters.photo & Filters.private, handle_receipt))
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.private, handle_message))
+        
+        # Error handler
+        dp.add_error_handler(error_handler)
+        
+        # Start Flask app for webhook compatibility in a separate thread
+        port = int(os.environ.get('PORT', 10000))
+        
+        def start_flask():
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
+        flask_thread = threading.Thread(target=start_flask, daemon=True)
+        flask_thread.start()
+        print(f"🚀 Flask server started on port {port}")
+        
+        # Start polling
+        print("✅ Bot is now running and polling for updates...")
+        print("🔇 Bot will be silent in group chats")
+        updater.start_polling()
+        updater.idle()  # This keeps the bot running
+        
+    except Exception as e:
+        print(f"❌ Failed to start bot: {e}")
+        print("💡 Try installing required packages: pip install python-telegram-bot pillow pytesseract flask python-dotenv")
 
 if __name__ == '__main__':
-    print("🚀 Starting TMZ BRAND VIP Payment Bot...")
+    main()
