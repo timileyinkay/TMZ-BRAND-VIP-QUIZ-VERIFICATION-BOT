@@ -5,7 +5,7 @@ import random
 import re
 import threading
 from datetime import datetime
-import easyocr
+import pytesseract
 from PIL import Image, ImageEnhance
 import io
 import os
@@ -41,28 +41,16 @@ if not GROUP_ID:
     print("💡 Get your group ID by adding @RawDataBot to your group and checking the 'chat_id' field")
     exit(1)
 
-# Tesseract OCR Configuration
-tesseract_path = os.getenv('TESSERACT_PATH')
-if tesseract_path and os.path.exists(tesseract_path):
+# Tesseract OCR Configuration - FIXED PATH
+tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if os.path.exists(tesseract_path):
     pytesseract.pytesseract.tesseract_cmd = tesseract_path
     TESSERACT_AVAILABLE = True
     print(f"✅ Tesseract configured: {tesseract_path}")
 else:
-    # Try common installation paths
-    common_paths = [
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-    ]
-    
-    for path in common_paths:
-        if os.path.exists(path):
-            pytesseract.pytesseract.tesseract_cmd = path
-            TESSERACT_AVAILABLE = True
-            print(f"✅ Tesseract found at: {path}")
-            break
-    else:
-        TESSERACT_AVAILABLE = False
-        print("❌ Tesseract not found. OCR will not work.")
+    TESSERACT_AVAILABLE = False
+    print(f"❌ Tesseract not found at: {tesseract_path}")
+    print("❌ OCR will not work. Please install Tesseract-OCR at the specified path.")
 
 # Database setup
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'opay_payments.db')
@@ -182,6 +170,7 @@ def extract_text_from_image(image_data):
     """Extract text from image using OCR with better configuration for financial receipts"""
     try:
         if not TESSERACT_AVAILABLE:
+            print("❌ OCR not available - Tesseract not found")
             return None
             
         # Open image from bytes
@@ -194,10 +183,9 @@ def extract_text_from_image(image_data):
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.0)  # Increase contrast
         
-        # Use easyocr for better accuracy on receipts
-        reader = easyocr.Reader(['en'], gpu=False)
-        result = reader.readtext(np.array(image), detail=0)
-        extracted_text = "\n".join(result)
+        # Use Tesseract with optimized configuration for receipts
+        custom_config = r'--oem 3 --psm 6'
+        extracted_text = pytesseract.image_to_string(image, config=custom_config)
         
         print("📸 OCR Text Extracted Successfully")
         print(f"🔍 Raw OCR Text:\n{extracted_text}")
@@ -205,6 +193,93 @@ def extract_text_from_image(image_data):
     except Exception as e:
         print(f"❌ OCR Error: {e}")
         return None
+
+def verify_all_conditions(extracted_text, expected_amount, ref, user_name):
+    """Verify ALL conditions must be met before payment verification"""
+    if not extracted_text:
+        return False, "❌ Could not read receipt text. Please ensure screenshot is clear and readable."
+    
+    text_upper = extracted_text.upper()
+    lines = [line.strip() for line in extracted_text.split('\n') if line.strip()]
+    
+    conditions_met = {
+        'amount': False,
+        'receiver': False,
+        'reference': False,
+        'success_status': False
+    }
+    
+    details_found = {
+        'detected_amount': None,
+        'receiver_match': False,
+        'reference_match': False,
+        'success_found': False
+    }
+    
+    # CONDITION 1: Verify exact amount
+    detected_amount = extract_amount_from_text(extracted_text, expected_amount)
+    if detected_amount and detected_amount == expected_amount:
+        conditions_met['amount'] = True
+        details_found['detected_amount'] = detected_amount
+    else:
+        actual_amount = detected_amount if detected_amount else "Not found"
+        return False, f"❌ WRONG AMOUNT!\n\nExpected: ₦{expected_amount:,}\nFound: ₦{actual_amount:,}\n\nOnly exactly ₦{expected_amount:,} is accepted!"
+    
+    # CONDITION 2: Verify receiver name
+    receiver_variations = [
+        RECEIVER_NAME.upper(),
+        RECEIVER_NAME.replace(' ', '').upper(),
+        RECEIVER_NAME.split()[0].upper() if ' ' in RECEIVER_NAME else RECEIVER_NAME.upper()
+    ]
+    
+    for line in lines:
+        line_upper = line.upper()
+        for receiver_var in receiver_variations:
+            if receiver_var in line_upper and len(receiver_var) > 3:
+                conditions_met['receiver'] = True
+                details_found['receiver_match'] = True
+                break
+        if conditions_met['receiver']:
+            break
+    
+    if not conditions_met['receiver']:
+        return False, f"❌ RECEIVER NAME NOT FOUND!\n\nExpected: {RECEIVER_NAME}\n\nPlease ensure receiver name '{RECEIVER_NAME}' is visible in the receipt."
+    
+    # CONDITION 3: Verify reference number
+    for line in lines:
+        if ref.upper() in line.upper():
+            conditions_met['reference'] = True
+            details_found['reference_match'] = True
+            break
+    
+    if not conditions_met['reference']:
+        return False, f"❌ REFERENCE NOT FOUND!\n\nExpected: {ref}\n\nPlease ensure reference '{ref}' is included in the receipt remarks/narration."
+    
+    # CONDITION 4: Verify successful transaction status
+    success_indicators = [
+        'SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 
+        'APPROVED', 'CONFIRMED', 'TRANSACTION SUCCESS'
+    ]
+    
+    for line in lines:
+        line_upper = line.upper()
+        for indicator in success_indicators:
+            if indicator in line_upper:
+                conditions_met['success_status'] = True
+                details_found['success_found'] = True
+                break
+        if conditions_met['success_status']:
+            break
+    
+    if not conditions_met['success_status']:
+        return False, "❌ TRANSACTION STATUS NOT VERIFIED!\n\nPlease ensure receipt shows 'Successful' or 'Completed' transaction status."
+    
+    # ALL CONDITIONS MET
+    if all(conditions_met.values()):
+        return True, "✅ All verification conditions met!"
+    else:
+        missing = [cond for cond, met in conditions_met.items() if not met]
+        return False, f"❌ Missing conditions: {', '.join(missing)}"
 
 def extract_amount_from_text(extracted_text, expected_amount):
     """Extract payment amount from OCR text - UPDATED FOR BOTH OPAY & PALMPAY"""
@@ -327,6 +402,8 @@ def extract_amount_from_text(extracted_text, expected_amount):
     
     print("❌ No valid amount found in receipt")
     return None
+
+# ========== MISSING FUNCTIONS ADDED BELOW ==========
 
 def start(update, context):
     """Handle /start command with payment button"""
@@ -807,7 +884,7 @@ def send_private_access(update, context, user_name, ref):
             f"✅ Status: Verified\n\n"
             f"🔒 **You now have access to the private VIP group!**\n\n"
             f"To join:\n"
-            f"1. Search for the group: **TMZ BRAND VIP**\n"
+            f"1. Search for the group: **@TMZBRAND_VIP_OFFICIAL**\n"
             f"2. Request to join\n"
             f"3. Your request will be **automatically approved**!\n\n"
             f"🎯 Welcome to the inner circle! 🏆"
@@ -1041,7 +1118,7 @@ def decline_request(update, context):
         update.message.reply_text("❌ Please provide a valid user ID (numbers only)")
 
 def handle_receipt(update, context):
-    """Handle receipt image upload and verification - STRICT AMOUNT CHECKING"""
+    """Handle receipt image upload and verification - STRICT ALL CONDITIONS CHECKING"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     
@@ -1071,7 +1148,7 @@ def handle_receipt(update, context):
     photo_file = update.message.photo[-1].get_file()
     
     # Download photo data
-    update.message.reply_text("🔍 Processing receipt... Please wait ⏳")
+    update.message.reply_text("🔍 Verifying receipt... Please wait ⏳")
     
     try:
         # Download image data
@@ -1092,32 +1169,16 @@ def handle_receipt(update, context):
             )
             return
         
-        # Extract amount from text
-        detected_amount = extract_amount_from_text(extracted_text, expected_amount)
+        # VERIFY ALL CONDITIONS MUST BE MET
+        all_conditions_met, verification_message = verify_all_conditions(
+            extracted_text, expected_amount, ref, user_name
+        )
         
-        if not detected_amount:
-            update.message.reply_text(
-                "❌ Could not find payment amount in receipt. Please ensure:\n\n"
-                "• Amount is clearly visible\n"
-                "• Receipt shows successful transaction\n"
-                "• All text is readable\n\n"
-                "Try again or contact support if problem persists."
-            )
+        if not all_conditions_met:
+            update.message.reply_text(verification_message)
             return
         
-        # STRICT AMOUNT VERIFICATION - ONLY EXACT BASE AMOUNT ACCEPTED
-        if detected_amount != expected_amount:  # No tolerance for any difference
-            update.message.reply_text(
-                f"❌ WRONG AMOUNT!\n\n"
-                f"🚫 Only exactly ₦{expected_amount:,} is accepted!\n"
-                f"💰 You sent: ₦{detected_amount:,}\n\n"
-                f"Please send exactly ₦{expected_amount:,} and upload the correct receipt.\n"
-                f"🔑 Reference: {ref}\n\n"
-                f"Use /pay to create a new payment request if needed."
-            )
-            return
-        
-        # Payment verified successfully!
+        # ALL CONDITIONS MET - Payment verified successfully!
         # Move from pending to verified
         c.execute("DELETE FROM pending_payments WHERE ref=?", (ref,))
         
@@ -1154,7 +1215,8 @@ def handle_receipt(update, context):
                     f"🆔 ID: {user_id}\n"
                     f"💰 Amount: ₦{expected_amount:,}\n"
                     f"🔑 Reference: {ref}\n"
-                    f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}"
+                    f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}\n"
+                    f"CLEAR BOT HISTORY AFTER VERIFICATION FOR PRIVACY"
                 )
             except:
                 pass
@@ -1213,321 +1275,6 @@ def home():
 def webhook():
     """Handle Telegram webhook updates - placeholder for future use"""
     return 'Webhook endpoint ready - using polling mode'
-
-import hashlib
-
-def create_payment_hash(user_id, amount, ref, timestamp):
-    """Create unique hash for each transaction"""
-    data = f"{user_id}{amount}{ref}{timestamp}"
-    return hashlib.sha256(data.encode()).hexdigest()
-
-def verify_transaction_integrity(user_id, amount, ref, timestamp, expected_hash):
-    """Verify transaction hasn't been tampered with"""
-    current_hash = create_payment_hash(user_id, amount, ref, timestamp)
-    return current_hash == expected_hash
-
-def enhanced_receipt_verification(extracted_text, expected_amount, ref):
-    """Enhanced verification with multiple security checks"""
-    verification_results = {
-        'amount_match': False,
-        'reference_found': False,
-        'receiver_found': False,
-        'platform_detected': False,
-        'transaction_success': False
-    }
-    
-    text_upper = extracted_text.upper()
-    
-    # 1. Amount Verification (existing)
-    detected_amount = extract_amount_from_text(extracted_text, expected_amount)
-    verification_results['amount_match'] = detected_amount == expected_amount
-    
-    # 2. Reference Number Check
-    verification_results['reference_found'] = ref.upper() in text_upper
-    
-    # 3. Receiver Name Check
-    verification_results['receiver_found'] = RECEIVER_NAME.upper() in text_upper
-    
-    # 4. Platform Detection
-    platforms = ['OPAY', 'PALMPAY', 'PAYMENT', 'TRANSFER']
-    verification_results['platform_detected'] = any(platform in text_upper for platform in platforms)
-    
-    # 5. Transaction Status Check
-    success_indicators = ['SUCCESSFUL', 'SUCCESS', 'COMPLETED', 'APPROVED']
-    verification_results['transaction_success'] = any(indicator in text_upper for indicator in success_indicators)
-    
-    # Calculate confidence score
-    confidence_score = sum(verification_results.values()) / len(verification_results)
-    
-    return verification_results, confidence_score
-
-def check_payment_timing(created_at, payment_time):
-    """Verify payment was made within valid time window"""
-    time_difference = payment_time - created_at
-    max_allowed_time = TIMEOUT_MINUTES * 60  # Convert to seconds
-    
-    if time_difference > max_allowed_time:
-        return False, "Payment was made after expiry time"
-    
-    # Check if payment was made BEFORE request (impossible)
-    if time_difference < 0:
-        return False, "Payment timestamp is invalid"
-    
-    return True, "Timing valid"
-
-def prevent_replay_attacks(user_id, ref):
-    """Prevent same receipt being used multiple times"""
-    c.execute("SELECT COUNT(*) FROM verified_payments WHERE ref=?", (ref,))
-    if c.fetchone()[0] > 0:
-        return False, "This payment has already been verified"
-    
-    # Check if user has recent verified payment (prevent spam)
-    c.execute("SELECT verified_at FROM verified_payments WHERE user_id=? ORDER BY verified_at DESC LIMIT 1", (user_id,))
-    recent = c.fetchone()
-    if recent and (time.time() - recent[0]) < 300:  # 5 minutes cooldown
-        return False, "Please wait before making another payment"
-    
-    return True, "OK"
-
-def extract_payment_metadata(extracted_text):
-    """Extract multiple data points from receipt for verification"""
-    metadata = {
-        'amount': None,
-        'reference': None,
-        'receiver': None,
-        'sender': None,
-        'time': None,
-        'platform': None
-    }
-    
-    lines = extracted_text.split('\n')
-    
-    for i, line in enumerate(lines):
-        line_upper = line.upper()
-        
-        # Detect platform-specific patterns
-        if 'OPAY' in line_upper:
-            metadata['platform'] = 'Opay'
-        elif 'PALMPAY' in line_upper:
-            metadata['platform'] = 'PalmPay'
-        
-        # Detect reference numbers (tmzbrand format)
-        ref_match = re.search(r'T[MZ]?BRAND[0-9]{6}', line_upper)
-        if ref_match:
-            metadata['reference'] = ref_match.group(0)
-        
-        # Detect receiver name
-        if RECEIVER_NAME.upper() in line_upper:
-            metadata['receiver'] = RECEIVER_NAME
-        
-        # Detect time/date patterns
-        time_match = re.search(r'(\d{1,2}[:.]\d{2}\s*[AP]?M?)', line, re.IGNORECASE)
-        if time_match:
-            metadata['time'] = time_match.group(1)
-    
-    return metadata
-
-import numpy as np
-from sklearn.ensemble import IsolationForest
-
-class FraudDetector:
-    def __init__(self):
-        self.model = IsolationForest(contamination=0.1)
-        self.is_trained = False
-        
-    def extract_features(self, user_data, payment_data, receipt_data):
-        """Extract features for fraud detection"""
-        features = [
-            payment_data['amount'],
-            payment_data['time_since_creation'],
-            user_data['previous_payments_count'],
-            user_data['account_age_days'],
-            receipt_data['confidence_score'],
-            receipt_data['verification_score'],
-            payment_data['hour_of_day'],  # Suspicious if unusual hours
-        ]
-        return np.array(features).reshape(1, -1)
-    
-    def predict_fraud(self, features):
-        """Predict if transaction is fraudulent"""
-        if not self.is_trained:
-            return 0  # Neutral if not trained yet
-        
-        prediction = self.model.predict(features)
-        return -1 if prediction[0] == -1 else 1
-    
-    def secure_database_operations():
-        """Enhance database security with additional tables"""
-    # Add transaction logging
-    c.execute('''CREATE TABLE IF NOT EXISTS security_logs
-                 (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, 
-                  timestamp REAL, ip_address TEXT, user_agent TEXT)''')
-    
-    # Add rate limiting table
-    c.execute('''CREATE TABLE IF NOT EXISTS rate_limits
-                 (user_id INTEGER PRIMARY KEY, attempt_count INTEGER, 
-                  last_attempt REAL, is_blocked INTEGER)''')
-    
-    conn.commit()
-
-def check_rate_limit(user_id):
-    """Prevent brute force attacks"""
-    c.execute("SELECT attempt_count, last_attempt, is_blocked FROM rate_limits WHERE user_id=?", (user_id,))
-    result = c.fetchone()
-    
-    current_time = time.time()
-    
-    if not result:
-        # First attempt
-        c.execute("INSERT INTO rate_limits VALUES (?, ?, ?, ?)", (user_id, 1, current_time, 0))
-        conn.commit()
-        return True
-    
-    attempt_count, last_attempt, is_blocked = result
-    
-    if is_blocked:
-        if current_time - last_attempt > 3600:  # 1 hour block
-            c.execute("UPDATE rate_limits SET is_blocked=0, attempt_count=1 WHERE user_id=?", (user_id,))
-            conn.commit()
-            return True
-        return False
-    
-    # Reset counter if more than 15 minutes passed
-    if current_time - last_attempt > 900:
-        attempt_count = 1
-    else:
-        attempt_count += 1
-    
-    # Block if too many attempts
-    if attempt_count > 5:
-        c.execute("UPDATE rate_limits SET is_blocked=1 WHERE user_id=?", (user_id,))
-        conn.commit()
-        return False
-    
-    c.execute("UPDATE rate_limits SET attempt_count=?, last_attempt=? WHERE user_id=?", 
-              (attempt_count, current_time, user_id))
-    conn.commit()
-    return True
-
-def enhanced_handle_receipt(update, context):
-    """Enhanced receipt verification with multiple security layers"""
-    user_id = update.effective_user.id
-    
-    # Rate limiting check
-    if not check_rate_limit(user_id):
-        update.message.reply_text("🚫 Too many attempts. Please try again in 1 hour.")
-        return
-    
-    # Get pending payment
-    c.execute("SELECT ref, amount, created_at, expiry_at FROM pending_payments WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    
-    if not row:
-        update.message.reply_text("❌ No pending payment found.")
-        return
-    
-    ref, expected_amount, created_at, expiry_at = row
-    
-    # Timing checks
-    current_time = time.time()
-    timing_valid, timing_msg = check_payment_timing(created_at, current_time)
-    if not timing_valid:
-        update.message.reply_text(f"⏰ {timing_msg}")
-        return
-    
-    # Replay attack prevention
-    replay_valid, replay_msg = prevent_replay_attacks(user_id, ref)
-    if not replay_valid:
-        update.message.reply_text(f"🚫 {replay_msg}")
-        return
-    
-    # Process receipt (your existing code)
-    # ... existing receipt processing code ...
-    
-    # Enhanced verification
-    verification_results, confidence_score = enhanced_receipt_verification(
-        extracted_text, expected_amount, ref
-    )
-    
-    # Extract metadata
-    metadata = extract_payment_metadata(extracted_text)
-    
-    # Decision making based on multiple factors
-    if (confidence_score >= 0.8 and 
-        verification_results['amount_match'] and 
-        verification_results['reference_found']):
-        
-        # High confidence - auto approve
-        approve_payment(update, context, user_id, ref, expected_amount)
-        
-    elif confidence_score >= 0.6:
-        # Medium confidence - require admin review
-        flag_for_admin_review(update, context, user_id, ref, verification_results, confidence_score)
-        
-    else:
-        # Low confidence - reject
-        update.message.reply_text(
-            f"❌ Payment verification failed.\n"
-            f"Confidence Score: {confidence_score:.1%}\n"
-            f"Please ensure receipt shows all required details clearly."
-        )
-
-def flag_for_admin_review(update, context, user_id, ref, verification_results, confidence_score):
-    """Flag suspicious payments for admin review"""
-    user_name = update.effective_user.first_name
-    
-    # Save to review queue
-    c.execute('''INSERT INTO payment_reviews 
-                 (user_id, ref, verification_results, confidence_score, review_time) 
-                 VALUES (?, ?, ?, ?, ?)''',
-              (user_id, ref, str(verification_results), confidence_score, time.time()))
-    conn.commit()
-    
-    update.message.reply_text(
-        f"🟡 Payment under review\n\n"
-        f"Your payment requires manual verification.\n"
-        f"Confidence Score: {confidence_score:.1%}\n"
-        f"Admin will review shortly."
-    )
-    
-    # Notify admin
-    if ADMIN_ID:
-        context.bot.send_message(
-            ADMIN_ID,
-            f"🟡 PAYMENT REVIEW REQUIRED\n\n"
-            f"👤 User: {user_name} (ID: {user_id})\n"
-            f"🔑 Reference: {ref}\n"
-            f"📊 Confidence: {confidence_score:.1%}\n"
-            f"🔍 Results: {verification_results}\n\n"
-            f"Commands:\n"
-            f"/approve_payment {ref}\n"
-            f"/reject_payment {ref}"
-        )
-
-def approve_payment_cmd(update, context):
-    """Admin command to approve reviewed payment"""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    
-    if not context.args:
-        update.message.reply_text("Usage: /approve_payment <reference>")
-        return
-    
-    ref = context.args[0]
-    
-    # Get review data and process payment
-    c.execute("SELECT user_id FROM payment_reviews WHERE ref=?", (ref,))
-    result = c.fetchone()
-    
-    if result:
-        user_id = result[0]
-        # Process the payment approval
-        # ... your approval logic ...
-        
-        c.execute("DELETE FROM payment_reviews WHERE ref=?", (ref,))
-        conn.commit()
-        
-        update.message.reply_text(f"✅ Payment {ref} approved manually")
 
 def main():
     """Main function to start the bot"""
