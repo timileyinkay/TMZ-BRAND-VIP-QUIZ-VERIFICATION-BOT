@@ -19,11 +19,25 @@ load_dotenv()
 print("🤖 Starting TMZ BRAND VIP Payment Bot with OCR...")
 
 # Configuration from .env file
+# Configuration from .env file with proper error handling
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPAY_ACCOUNT = os.getenv('OPAY_ACCOUNT_NUMBER')
 RECEIVER_NAME = os.getenv('RECEIVER_NAME')
 TIMEOUT_MINUTES = int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 20))
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
+
+# Handle ADMIN_ID with proper error checking
+admin_id_str = os.getenv('ADMIN_ID')
+if not admin_id_str:
+    print("❌ Missing ADMIN_ID environment variable")
+    print("💡 Please set ADMIN_ID in Railway dashboard environment variables")
+    exit(1)
+
+try:
+    ADMIN_ID = int(admin_id_str)
+except ValueError:
+    print("❌ ADMIN_ID must be a valid number")
+    exit(1)
+
 # Initial base amount (will be dynamic)
 BASE_AMOUNT = int(os.getenv('BASE_AMOUNT', 2000))
 # Optional TMZ brand fee to display (does NOT change required payment amount)
@@ -33,16 +47,18 @@ GROUP_ID = os.getenv('GROUP_ID')  # Add this to your .env file
 
 # Safety check: ensure your bot token exists
 if not TOKEN:
-    print("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
+    print("❌ Missing TELEGRAM_BOT_TOKEN environment variable")
+    print("💡 Please set TELEGRAM_BOT_TOKEN in Railway dashboard")
     exit(1)
 
 if not GROUP_ID:
-    print("❌ Missing GROUP_ID in .env file")
+    print("❌ Missing GROUP_ID environment variable")
     print("💡 Get your group ID by adding @RawDataBot to your group and checking the 'chat_id' field")
+    print("💡 Then set GROUP_ID in Railway dashboard")
     exit(1)
 
 # Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
-# Tesseract OCR Configuration - WORKS ON BOTH WINDOWS AND RENDER
+
 import platform
 
 TESSERACT_AVAILABLE = False
