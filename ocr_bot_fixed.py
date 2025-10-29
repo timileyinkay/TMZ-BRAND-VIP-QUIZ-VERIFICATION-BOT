@@ -98,6 +98,14 @@ else:
     except Exception as e:
         print(f"❌ Tesseract configuration error: {e}")
 
+# After the Tesseract configuration section, add:
+if not TESSERACT_AVAILABLE:
+    print("⚠️  Tesseract OCR is not available on this system")
+    print("💡 Receipt verification will not work automatically")
+    print("💡 Users will need manual verification by admin")
+else:
+    print("✅ Tesseract OCR is ready for receipt verification")
+
 # Database setup
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'opay_payments.db')
 conn = sqlite3.connect(DATABASE_NAME, check_same_thread=False)
@@ -1338,6 +1346,10 @@ def main():
         photo_filter = filters.PHOTO & private_filter
         text_filter = filters.TEXT & ~filters.COMMAND & private_filter
         print("✅ Using new filters system (v20.0+)")
+        
+        # Create updater for new version (no use_context parameter)
+        updater = Updater(TOKEN)
+        
     except (ImportError, AttributeError):
         # Old version (pre-20.0)
         from telegram.ext import Filters
@@ -1345,9 +1357,10 @@ def main():
         photo_filter = Filters.photo & private_filter
         text_filter = Filters.text & ~Filters.command & private_filter
         print("✅ Using legacy filters system (pre-v20.0)")
+        
+        # Create updater for old version
+        updater = Updater(TOKEN, use_context=True)
     
-    # Create updater and dispatcher
-    updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
     # Add handlers for private chats only
