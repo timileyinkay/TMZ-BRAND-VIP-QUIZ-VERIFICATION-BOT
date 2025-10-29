@@ -18,27 +18,32 @@ load_dotenv()
 
 print("🤖 Starting TMZ BRAND VIP Payment Bot with OCR...")
 
-# Configuration from .env file
+# Configuration from .env file with safety checks
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPAY_ACCOUNT = os.getenv('OPAY_ACCOUNT_NUMBER')
 RECEIVER_NAME = os.getenv('RECEIVER_NAME')
 TIMEOUT_MINUTES = int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 20))
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
-# Initial base amount (will be dynamic)
-BASE_AMOUNT = int(os.getenv('BASE_AMOUNT', 2000))
-# Optional TMZ brand fee to display (does NOT change required payment amount)
-TMZ_BRAND_FEE_NAIRA = int(os.getenv('TMZ_BRAND_FEE_NAIRA', 0))
-# Group ID for the private VIP group (REQUIRED - get this from @RawDataBot)
-GROUP_ID = os.getenv('GROUP_ID')  # Add this to your .env file
 
-# Safety check: ensure your bot token exists
-if not TOKEN:
-    print("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
+# Safe admin ID conversion
+admin_id_str = os.getenv('ADMIN_ID')
+if not admin_id_str:
+    print("❌ CRITICAL: Missing ADMIN_ID environment variable")
+    print("💡 Add ADMIN_ID=6011041717 in Railway Variables")
     exit(1)
+ADMIN_ID = int(admin_id_str)
 
+# Safe base amount conversion
+base_amount_str = os.getenv('BASE_AMOUNT', '2000')
+BASE_AMOUNT = int(base_amount_str)
+
+# Optional TMZ brand fee
+tmz_fee_str = os.getenv('TMZ_BRAND_FEE_NAIRA', '0')
+TMZ_BRAND_FEE_NAIRA = int(tmz_fee_str)
+
+# Group ID for the private VIP group
+GROUP_ID = os.getenv('GROUP_ID')
 if not GROUP_ID:
-    print("❌ Missing GROUP_ID in .env file")
-    print("💡 Get your group ID by adding @RawDataBot to your group and checking the 'chat_id' field")
+    print("❌ Missing GROUP_ID in environment variables")
     exit(1)
 
 # Tesseract OCR Configuration - FIXED PATH
