@@ -1,0 +1,8 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python ocr_bot_fixed.py"
+
+[env]
+PORT = "10000"
